@@ -6,6 +6,7 @@ node_modules/
 dist-ssr/
 .vite/
 coverage/
+/Snipaste_*
 
 
 # local env files
