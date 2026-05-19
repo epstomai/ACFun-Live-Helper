@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu.Im.Basic;
+
+import "LocaleMessage.proto";
+
+message ErrorMessage {
+	repeated LocaleMessage localeMessages = 1;
+}

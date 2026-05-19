@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu.Im.Basic;
+
+message SettingInfo {
+	string locale = 1;
+	sint32 timezone = 2;
+}

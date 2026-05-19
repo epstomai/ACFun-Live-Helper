@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ACFun Danmaku Overlay</title>
+    <style>
+      :root {
+        --font-size: 18px;
+        --font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
+        --text-color: #ffffff;
+        --name-color: #fd4c5d;
+        --bubble-color: rgba(36, 27, 32, 0.78);
+        --rounded: 18px;
+        --gap: 10px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+        font-family: var(--font-family);
+      }
+
+      #feed {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: var(--gap);
+        width: 100%;
+        height: 100%;
+        padding: 14px;
+        pointer-events: none;
+      }
+
+      .item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        width: max-content;
+        min-width: min(220px, 100%);
+        max-width: 100%;
+        padding: 9px 12px;
+        color: var(--text-color);
+        background: var(--bubble-color);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: var(--rounded);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+        font-size: var(--font-size);
+        line-height: 1.35;
+        overflow: hidden;
+        flex: 0 0 auto;
+        animation-duration: 460ms;
+        animation-fill-mode: both;
+      }
+
+      .item.plain {
+        padding: 0;
+        background: transparent;
+        border-color: transparent;
+        box-shadow: none;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.95);
+      }
+
+      .avatar {
+        width: calc(var(--font-size) * 2.15);
+        height: calc(var(--font-size) * 2.15);
+        overflow: hidden;
+        background: #fd4c5d;
+        border: 2px solid rgba(255, 255, 255, 0.72);
+        border-radius: 50%;
+      }
+
+      .avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .avatar span {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        height: 100%;
+        color: #ffffff;
+        font-weight: 800;
+      }
+
+      .body {
+        min-width: 0;
+      }
+
+      .name {
+        display: block;
+        margin-bottom: 2px;
+        color: var(--name-color);
+        font-size: 0.82em;
+        font-weight: 800;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .content {
+        overflow-wrap: anywhere;
+        font-weight: 700;
+      }
+
+      .gift {
+        color: #ffd6dc;
+      }
+
+      .slide {
+        animation-name: slide-in;
+      }
+
+      .float {
+        animation-name: float-in;
+      }
+
+      .pop {
+        animation-name: pop-in;
+      }
+
+      .fade {
+        animation-name: fade-in;
+      }
+
+      @keyframes slide-in {
+        from {
+          opacity: 0;
+          transform: translateX(40px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      @keyframes float-in {
+        from {
+          opacity: 0;
+          transform: translateY(24px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes pop-in {
+        0% {
+          opacity: 0;
+          transform: scale(0.88);
+        }
+        70% {
+          opacity: 1;
+          transform: scale(1.04);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="feed"></div>
+    <script>
+      const BackendTypes = Object.freeze({
+        HEARTBEAT: 1,
+        SET_TOKEN: 6,
+        GET_DANMU: 100,
+      })
+
+      const DanmuTypes = Object.freeze({
+        COMMENT: 1000,
+        LIKE: 1001,
+        ENTER_ROOM: 1002,
+        FOLLOW_AUTHOR: 1003,
+        THROW_BANANA: 1004,
+        GIFT: 1005,
+        RICH_TEXT: 1006,
+        JOIN_CLUB: 1007,
+        SHARE_LIVE: 1008,
+        RECENT_COMMENT: 2004,
+        DISPLAY_INFO: 2002,
+      })
+
+      const PLACEHOLDER_DANMU = { nickname: "AC娘", content: "等待主播开播中…" }
+
+      const RECONNECT_DELAY_MS = 30000
+      const HEARTBEAT_INTERVAL_MS = 5000
+
+      const params = new URLSearchParams(window.location.search)
+      const feed = document.querySelector("#feed")
+      const state = {
+        backendUrl: params.get("backendUrl") || "ws://127.0.0.1:15368/",
+        liverUID: Number(params.get("liverUID") || 0),
+        tokenInfo: decodeBase64Json(params.get("token")),
+        style: {
+          maxItems: 18,
+          fontSize: 18,
+          fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
+          textColor: "#ffffff",
+          nameColor: "#fd4c5d",
+          bubbleColor: "rgba(36, 27, 32, 0.78)",
+          bubbleEnabled: true,
+          showAvatar: true,
+          animation: "slide",
+          rounded: 18,
+          gap: 10,
+          ...decodeBase64Json(params.get("style")),
+        },
+        requestSeed: 0,
+        pending: new Map(),
+        socket: null,
+        placeholderShown: false,
+        heartbeatTimer: null,
+        reconnectTimer: null,
+      }
+
+      applyStyle()
+      connect()
+
+      function decodeBase64Json(value) {
+        if (!value) {
+          return {}
+        }
+        try {
+          const normalized = value.replace(/-/g, "+").replace(/_/g, "/")
+          const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")
+          const binary = atob(padded)
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+          return JSON.parse(new TextDecoder().decode(bytes))
+        } catch {
+          return {}
+        }
+      }
+
+      function applyStyle() {
+        document.documentElement.style.setProperty("--font-size", `${state.style.fontSize}px`)
+        document.documentElement.style.setProperty("--font-family", state.style.fontFamily)
+        document.documentElement.style.setProperty("--text-color", state.style.textColor)
+        document.documentElement.style.setProperty("--name-color", state.style.nameColor)
+        document.documentElement.style.setProperty("--bubble-color", state.style.bubbleColor)
+        document.documentElement.style.setProperty("--rounded", `${state.style.rounded}px`)
+        document.documentElement.style.setProperty("--gap", `${state.style.gap}px`)
+      }
+
+      function connect() {
+        if (!state.liverUID) {
+          showPlaceholder()
+          return
+        }
+
+        closeSocket()
+        clearReconnect()
+
+        state.socket = new WebSocket(state.backendUrl)
+        state.socket.onopen = async () => {
+          try {
+            if (state.tokenInfo && state.tokenInfo.userID) {
+              await request(BackendTypes.SET_TOKEN, state.tokenInfo)
+            }
+            await request(BackendTypes.GET_DANMU, { liverUID: state.liverUID })
+            clearPlaceholder()
+            startHeartbeat()
+          } catch (error) {
+            showPlaceholder()
+            scheduleReconnect()
+            try { state.socket && state.socket.close() } catch (_) {}
+          }
+        }
+        state.socket.onmessage = (event) => handleMessage(event)
+        state.socket.onclose = () => {
+          stopHeartbeat()
+          showPlaceholder()
+          scheduleReconnect()
+        }
+        state.socket.onerror = () => {
+          showPlaceholder()
+        }
+      }
+
+      function closeSocket() {
+        if (!state.socket) return
+        state.socket.onopen = null
+        state.socket.onmessage = null
+        state.socket.onclose = null
+        state.socket.onerror = null
+        try { state.socket.close() } catch (_) {}
+        state.socket = null
+      }
+
+      function clearReconnect() {
+        if (state.reconnectTimer) {
+          window.clearTimeout(state.reconnectTimer)
+          state.reconnectTimer = null
+        }
+      }
+
+      function scheduleReconnect() {
+        if (state.reconnectTimer) return
+        state.reconnectTimer = window.setTimeout(() => {
+          state.reconnectTimer = null
+          connect()
+        }, RECONNECT_DELAY_MS)
+      }
+
+      function startHeartbeat() {
+        stopHeartbeat()
+        state.heartbeatTimer = window.setInterval(() => {
+          if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            state.socket.send(JSON.stringify({ type: BackendTypes.HEARTBEAT }))
+          }
+        }, HEARTBEAT_INTERVAL_MS)
+      }
+
+      function stopHeartbeat() {
+        if (state.heartbeatTimer) {
+          window.clearInterval(state.heartbeatTimer)
+          state.heartbeatTimer = null
+        }
+      }
+
+      function showPlaceholder() {
+        if (state.placeholderShown) return
+        state.placeholderShown = true
+        renderDanmu({
+          nickname: PLACEHOLDER_DANMU.nickname,
+          content: PLACEHOLDER_DANMU.content,
+          avatar: "",
+          isGift: false,
+        })
+        const last = feed.lastElementChild
+        if (last) last.classList.add("placeholder")
+      }
+
+      function clearPlaceholder() {
+        state.placeholderShown = false
+        feed.querySelectorAll(".placeholder").forEach((node) => node.remove())
+      }
+
+      function request(type, data) {
+        const requestID = `${Date.now()}-${++state.requestSeed}`
+        return new Promise((resolve, reject) => {
+          const timer = window.setTimeout(() => {
+            state.pending.delete(requestID)
+            reject(new Error(`请求 ${type} 超时`))
+          }, 12000)
+          state.pending.set(requestID, { resolve, reject, timer })
+          state.socket.send(JSON.stringify({ type, requestID, data }))
+        })
+      }
+
+      function handleMessage(event) {
+        let message
+        try {
+          message = JSON.parse(event.data)
+        } catch {
+          return
+        }
+
+        if (message.requestID && state.pending.has(message.requestID)) {
+          const pending = state.pending.get(message.requestID)
+          window.clearTimeout(pending.timer)
+          state.pending.delete(message.requestID)
+          if (message.result === 1) {
+            pending.resolve(message.data)
+          } else {
+            pending.reject(new Error(message.error || "后端请求失败"))
+          }
+          return
+        }
+
+        if (message.liverUID !== undefined && message.type !== undefined) {
+          mapDanmuMessage(message).forEach(renderDanmu)
+        }
+      }
+
+      function mapDanmuMessage(message) {
+        const data = message.data || {}
+        if (message.type === DanmuTypes.RECENT_COMMENT && Array.isArray(data)) {
+          return data.map((item) => makeItem(item.danmuInfo && item.danmuInfo.userInfo, item.content, item.danmuInfo && item.danmuInfo.sendTime))
+        }
+        if (message.type === DanmuTypes.COMMENT) {
+          return [makeItem(data.danmuInfo && data.danmuInfo.userInfo, data.content, data.danmuInfo && data.danmuInfo.sendTime)]
+        }
+        if (message.type === DanmuTypes.GIFT) {
+          const gift = data.giftDetail || {}
+          const count = Number(data.count || 1) * Number(data.combo || 1)
+          return [makeItem(getUserInfo(data), `${gift.giftName || "礼物"} x${count}`, data.danmuInfo && data.danmuInfo.sendTime, true)]
+        }
+        if (message.type === DanmuTypes.THROW_BANANA) {
+          return [makeItem(getUserInfo(data), `香蕉 x${data.bananaCount || 1}`, data.danmuInfo && data.danmuInfo.sendTime, true)]
+        }
+        if (message.type === DanmuTypes.ENTER_ROOM) {
+          return [makeItem(data.userInfo, "进入直播间", data.sendTime)]
+        }
+        if (message.type === DanmuTypes.FOLLOW_AUTHOR) {
+          return [makeItem(data.userInfo, "关注了主播", data.sendTime)]
+        }
+        if (message.type === DanmuTypes.JOIN_CLUB) {
+          return [makeItem(data.fansInfo, "加入守护团", data.joinTime)]
+        }
+        if (message.type === DanmuTypes.RICH_TEXT) {
+          return [makeItem(getRichTextUser(data), richTextContent(data), data.sendTime)]
+        }
+        return []
+      }
+
+      function getUserInfo(data) {
+        return data.userInfo || (data.danmuInfo && data.danmuInfo.userInfo) || data.fansInfo || {}
+      }
+
+      function getRichTextUser(data) {
+        const segment = (data.segments || []).find((item) => item.segment && item.segment.userInfo)
+        return segment ? segment.segment.userInfo : {}
+      }
+
+      function richTextContent(data) {
+        return (data.segments || []).map((item) => {
+          const segment = item.segment || {}
+          if (segment.userInfo) {
+            return segment.userInfo.nickname || ""
+          }
+          if (segment.text) {
+            return segment.text
+          }
+          if (segment.alternativeText) {
+            return segment.alternativeText
+          }
+          if (Array.isArray(segment.pictures) && segment.pictures.length) {
+            return "[图片]"
+          }
+          return ""
+        }).join("")
+      }
+
+      function makeItem(userInfo = {}, content = "", time = Date.now(), isGift = false) {
+        return {
+          nickname: userInfo.nickname || userInfo.name || "匿名用户",
+          avatar: userInfo.avatar || "",
+          content: content || "",
+          time,
+          isGift,
+        }
+      }
+
+      function renderDanmu(item) {
+        if (!item.content) {
+          return
+        }
+
+        const article = document.createElement("article")
+        article.className = `item ${state.style.animation || "slide"}`
+        if (!state.style.bubbleEnabled) {
+          article.classList.add("plain")
+        }
+
+        if (state.style.showAvatar) {
+          const avatar = document.createElement("div")
+          avatar.className = "avatar"
+          if (item.avatar) {
+            const img = document.createElement("img")
+            img.src = item.avatar
+            avatar.appendChild(img)
+          } else {
+            const fallback = document.createElement("span")
+            fallback.textContent = String(item.nickname || "A").slice(0, 1).toUpperCase()
+            avatar.appendChild(fallback)
+          }
+          article.appendChild(avatar)
+        }
+
+        const body = document.createElement("div")
+        body.className = "body"
+        const name = document.createElement("strong")
+        name.className = "name"
+        name.textContent = item.nickname
+        const content = document.createElement("div")
+        content.className = item.isGift ? "content gift" : "content"
+        content.textContent = item.content
+        body.append(name, content)
+        article.appendChild(body)
+        feed.appendChild(article)
+
+        while (feed.children.length > Number(state.style.maxItems || 18)) {
+          feed.firstElementChild.remove()
+        }
+      }
+    </script>
+  </body>
+</html>

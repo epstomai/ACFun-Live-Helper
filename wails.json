@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "ACFun Live Helper",
+  "outputfilename": "ACFun Live Helper",
+  "frontend:dir": ".",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev -- --host 127.0.0.1",
+  "frontend:dev:serverUrl": "http://127.0.0.1:5173",
+  "wailsjsdir": "./wailsjs",
+  "debounceMS": 100,
+  "devServer": "localhost:34115",
+  "info": {
+    "companyName": "Hakura",
+    "productName": "ACFun Live Helper",
+    "productVersion": "1.0.0",
+    "comments": "ACFun live streaming helper powered by acfunlive-backend"
+  }
+}

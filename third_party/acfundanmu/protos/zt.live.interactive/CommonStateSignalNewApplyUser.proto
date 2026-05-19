@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+message CommonStateSignalNewApplyUser {
+    int64 a = 1;
+}

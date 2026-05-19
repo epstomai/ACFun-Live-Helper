@@ -1,0 +1,13 @@
+﻿syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+import "ZtLiveUserInfo.proto";
+
+message AuthorChatPlayerInfo {
+	ZtLiveUserInfo player = 1;
+	string liveId = 2;
+	bool enableJumpPeerLiveRoom = 3; // enableVisit
+}

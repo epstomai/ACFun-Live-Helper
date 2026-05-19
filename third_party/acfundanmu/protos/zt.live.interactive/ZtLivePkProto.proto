@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+enum ZtLivePkProto {
+    ZtLivePkProtoA = 0;
+    ZtLivePkProtoB = 1;
+    ZtLivePkProtoC = 2;
+    ZtLivePkProtoD = 3;
+}

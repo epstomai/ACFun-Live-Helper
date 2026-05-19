@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+message CommonNotifySignalKickedOut {
+	string reason = 1;
+	string b = 2;
+}

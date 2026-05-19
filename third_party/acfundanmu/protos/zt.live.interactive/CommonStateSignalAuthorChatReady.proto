@@ -1,0 +1,13 @@
+﻿syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+import "AuthorChatPlayerInfo.proto";
+
+message CommonStateSignalAuthorChatReady {
+	string authorChatId = 1;
+	AuthorChatPlayerInfo inviterUserInfo = 2;
+	AuthorChatPlayerInfo inviteeUserInfo = 3;
+}

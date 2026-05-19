@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+import "ZtLiveStateSignalItem.proto";
+
+message ZtLiveScStateSignal {
+	repeated ZtLiveStateSignalItem item = 1;
+}

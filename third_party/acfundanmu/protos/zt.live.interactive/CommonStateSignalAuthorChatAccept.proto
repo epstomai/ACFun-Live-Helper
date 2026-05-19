@@ -1,0 +1,10 @@
+﻿syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+message CommonStateSignalAuthorChatAccept {
+	string authorChatId = 1;
+	string aryaSignalInfo = 2;
+}

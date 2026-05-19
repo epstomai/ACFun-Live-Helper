@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+option go_package = "github.com/orzogc/acfundanmu/acproto";
+
+package AcFunDanmu;
+
+import "PkPlayerInfo.proto";
+
+message CommonStateSignalPKReady {
+    string a = 1;
+    repeated PkPlayerInfo b = 2;
+}
