@@ -268,7 +268,12 @@ func readWindowsFontRegistry(root registry.Key, fonts map[string]struct{}) {
 			font = strings.TrimSpace(font[:index])
 		}
 		if font != "" {
-			fonts[font] = struct{}{}
+			for _, part := range strings.Split(font, "&") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					fonts[part] = struct{}{}
+				}
+			}
 		}
 	}
 }

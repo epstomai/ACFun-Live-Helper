@@ -1,9 +1,30 @@
 <template>
-  <div class="app-shell">
+  <div
+    class="app-shell"
+    :class="[`theme-${store.ui.theme}`, { 'sidebar-collapsed': store.ui.sidebarCollapsed }]"
+    :style="appShellStyle"
+  >
     <aside class="sidebar">
       <div class="brand">
-        <h1>AcFun Live Helper</h1>
-        <p>{{ store.connected ? "后端已连接" : "后端未连接" }}</p>
+        <div class="brand-main">
+          <h1>AcFun Live Helper</h1>
+        </div>
+        <button
+          class="sidebar-toggle"
+          :class="{ flash: sidebarToggleFlash, 'heart-mode': isExtremeNarrowSidebar }"
+          :title="sidebarToggleTitle"
+          @click="handleSidebarToggle"
+        >
+          <component :is="sidebarToggleIcon" :size="16" />
+          <span v-if="isExtremeNarrowSidebar" class="sidebar-heart-layer" aria-hidden="true">
+            <span
+              v-for="heart in sidebarHearts"
+              :key="heart.id"
+              class="sidebar-heart-pop"
+              :style="{ '--heart-x': `${heart.x}px`, '--heart-scale': heart.scale }"
+            >♥</span>
+          </span>
+        </button>
       </div>
 
       <nav class="nav-list">
@@ -42,6 +63,9 @@
           </p>
         </div>
         <div class="topbar-actions">
+          <button class="icon-button" :title="store.ui.theme === 'dark' ? '要有光！' : '狗眼①瞎'" @click="store.toggleTheme">
+            <component :is="themeIcon" :size="17" />
+          </button>
           <div v-if="store.isLoggedIn" class="profile-chip" @click="store.activeTab = 'account'">
             <div class="avatar avatar-sm">
               <img v-if="store.userProfile.avatar" :src="store.userProfile.avatar" :alt="store.userName" />
@@ -150,6 +174,36 @@
             <div><dt>最近错误</dt><dd>{{ store.lastError || "-" }}</dd></div>
           </dl>
         </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3>设置</h3>
+            <span>界面</span>
+          </div>
+          <label class="block-label">
+            <span>UI 整体缩放</span>
+            <div class="scale-control">
+              <input
+                v-model.number="uiScalePercent"
+                type="range"
+                min="50"
+                max="150"
+                step="5"
+                @change="applyUiScale"
+              />
+              <input
+                v-model.number="uiScalePercent"
+                type="number"
+                min="50"
+                max="150"
+                step="5"
+                @change="applyUiScale"
+              />
+              <span>%</span>
+              <button class="command" @click="resetUiScale">重置</button>
+            </div>
+          </label>
+        </div>
       </section>
 
       <!-- 开播 -->
@@ -186,28 +240,16 @@
               </select>
             </label>
             <label class="full">
-              <span>封面</span>
-              <div class="cover-row">
-                <button
-                  type="button"
-                  class="cover-row-thumb"
-                  :class="{ empty: !coverPreviewSrc }"
-                  :style="coverAspectStyle"
-                  :title="store.live.coverFile || '点击选择封面'"
-                  @click="openCoverEditor"
-                >
-                  <img v-if="coverPreviewSrc" :src="coverPreviewSrc" :style="cropTransformStyle(store.live.coverFile)" alt="当前封面" />
-                  <span v-else>无封面</span>
-                  <small v-if="isGifCover" class="cover-row-badge">GIF</small>
-                </button>
-                <button class="command" @click="openCover"><FolderOpen :size="16" /><span>上传</span></button>
-                <button class="command" @click="openCoverEditor"><Images :size="16" /><span>历史封面</span></button>
-              </div>
-            </label>
-            <label>
               <span>串流密钥</span>
               <div class="inline-input">
-                <input :value="store.live.streamKey" readonly />
+                <input :value="store.live.streamKey" :type="streamKeyVisible ? 'text' : 'password'" readonly />
+                <button
+                  class="icon-button"
+                  :title="streamKeyVisible ? '隐藏' : '显示'"
+                  @click="streamKeyVisible = !streamKeyVisible"
+                >
+                  <component :is="streamKeyVisible ? EyeOff : Eye" :size="16" />
+                </button>
                 <button class="icon-button" title="复制" @click="copy(store.live.streamKey)"><Clipboard :size="16" /></button>
               </div>
             </label>
@@ -244,6 +286,29 @@
             <button class="command" @click="run(() => store.loadPushConfig())">
               <KeyRound :size="16" /><span>刷新推流码</span>
             </button>
+          </div>
+        </div>
+
+        <div class="panel cover-panel">
+          <div class="panel-head">
+            <h3>封面</h3>
+          </div>
+          <button
+            type="button"
+            class="cover-large-preview"
+            :class="{ empty: !coverPreviewSrc }"
+            :style="coverAspectStyle"
+            :title="store.live.coverFile || '点击选择封面'"
+            @click="openCoverEditor"
+          >
+            <img v-if="coverPreviewSrc" :src="coverPreviewSrc" :style="cropTransformStyle(store.live.coverFile)" alt="当前封面" />
+            <span v-else>无封面</span>
+            <span class="cover-large-preview-hint"><Images :size="16" />点击编辑封面</span>
+            <small v-if="isGifCover" class="cover-row-badge">GIF</small>
+          </button>
+          <div class="cover-panel-actions">
+            <button class="command" @click="openCover"><FolderOpen :size="16" /><span>上传</span></button>
+            <button class="command" @click="openCoverEditor"><Images :size="16" /><span>编辑封面</span></button>
           </div>
         </div>
 
@@ -313,7 +378,11 @@
             <div><strong>{{ displayCount(store.room.bananaCount) }}</strong><span>香蕉</span></div>
           </div>
           <div class="danmaku-compose">
-            <input v-model="commentText" placeholder="发送弹幕" @keyup.enter="sendComment" />
+            <input ref="commentInputRef" v-model="commentText" placeholder="发送弹幕" @keyup.enter="sendComment" />
+            <select class="a-island-emote-select" value="" title="插入颜文字" @change="insertAIslandEmote($event.target.value, $event.target)">
+              <option value="" disabled>( ﾟ∀。)</option>
+              <option v-for="(item, index) in aIslandEmotes" :key="`${index}-${item}`" :value="item">{{ item }}</option>
+            </select>
             <button class="command primary" @click="sendComment"><Send :size="16" /><span>发送</span></button>
             <button class="command" @click="run(() => store.loadRoom())"><RefreshCw :size="16" /><span>刷新</span></button>
             <button class="command" @click="run(() => store.startDanmu({ restart: true }))"><Radio :size="16" /><span>重连</span></button>
@@ -408,7 +477,6 @@
         <div class="panel wide">
           <div class="panel-head">
             <h3>OBS 弹幕浏览器源</h3>
-            <span>{{ store.userId ? "复制 URL 到 OBS" : "登录后生成" }}</span>
           </div>
           <label class="block-label">
             <span>浏览器来源 URL</span>
@@ -424,11 +492,6 @@
             <label><span>字号</span><input v-model.number="store.overlay.fontSize" type="number" min="12" max="48" @change="store.persist" /></label>
             <label><span>圆角</span><input v-model.number="store.overlay.rounded" type="number" min="0" max="40" @change="store.persist" /></label>
             <label><span>间距</span><input v-model.number="store.overlay.gap" type="number" min="0" max="32" @change="store.persist" /></label>
-            <label class="full"><span>字体</span>
-              <select v-model="store.overlay.fontFamily" @change="store.persist">
-                <option v-for="font in systemFonts" :key="font" :value="font">{{ font }}</option>
-              </select>
-            </label>
             <label><span>动画</span>
               <select v-model="store.overlay.animation" @change="store.persist">
                 <option value="slide">滑入</option>
@@ -437,9 +500,38 @@
                 <option value="fade">淡入</option>
               </select>
             </label>
-            <label><span>文字色</span><input v-model="store.overlay.textColor" type="color" @change="store.persist" /></label>
-            <label><span>昵称色</span><input v-model="store.overlay.nameColor" type="color" @change="store.persist" /></label>
-            <label class="full"><span>气泡色</span><input v-model="store.overlay.bubbleColor" placeholder="rgba(36, 27, 32, 0.78)" @change="store.persist" /></label>
+            <label><span>简繁转换</span>
+              <select v-model="store.overlay.convertChinese" @change="store.persist">
+                <option value="none">不转换</option>
+                <option value="s2t">转繁体</option>
+                <option value="t2s">转简体</option>
+              </select>
+            </label>
+          </div>
+          <div class="overlay-control-grid cols-2">
+            <label><span>用户名字体</span>
+              <select v-model="store.overlay.nameFontFamily" @change="store.persist">
+                <option v-for="font in systemFonts" :key="font" :value="font">{{ font }}</option>
+              </select>
+            </label>
+            <label><span>内容字体</span>
+              <select v-model="store.overlay.contentFontFamily" @change="store.persist">
+                <option v-for="font in systemFonts" :key="font" :value="font">{{ font }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="overlay-control-grid cols-3">
+            <label><span>文字色</span>
+              <HsvColorPicker v-model="store.overlay.textColor" @update:modelValue="store.persist" />
+            </label>
+            <label><span>昵称色</span>
+              <HsvColorPicker v-model="store.overlay.nameColor" @update:modelValue="store.persist" />
+            </label>
+            <label><span>气泡色</span>
+              <HsvColorPicker v-model="store.overlay.bubbleColor" alpha @update:modelValue="store.persist" />
+            </label>
+          </div>
+          <div class="overlay-control-grid">
             <div class="toggle-row full">
               <label class="checkbox-label">
                 <input v-model="store.overlay.bubbleEnabled" type="checkbox" @change="store.persist" />
@@ -452,13 +544,21 @@
             </div>
           </div>
           <div class="overlay-preview" :style="overlayPreviewStyle">
-            <article class="overlay-preview-item" :class="{ plain: !store.overlay.bubbleEnabled }">
-              <div v-if="store.overlay.showAvatar" class="overlay-preview-avatar">A</div>
+            <article
+              v-for="item in previewItems"
+              :key="item.id"
+              class="overlay-preview-item"
+              :class="[store.overlay.animation, { plain: !store.overlay.bubbleEnabled }]"
+            >
+              <div v-if="store.overlay.showAvatar" class="overlay-preview-avatar">{{ avatarInitial(item.nickname) }}</div>
               <div>
-                <strong>AcFun用户</strong>
-                <span>这是一条弹幕预览，样式会同步到 OBS 浏览器源。</span>
+                <strong>{{ convertPreviewText(item.nickname) }}</strong>
+                <span>{{ convertPreviewText(item.content) }}</span>
               </div>
             </article>
+          </div>
+          <div class="panel-actions compact overlay-preview-actions">
+            <button class="command" @click="replayOverlayPreview"><Play :size="16" /><span>预览动画</span></button>
           </div>
         </div>
       </section>
@@ -525,9 +625,14 @@
                 <div><dt>礼物</dt><dd>{{ item.gift }}</dd></div>
                 <div><dt>香蕉</dt><dd>{{ item.banana }}</dd></div>
               </dl>
-              <button class="small-icon danger" title="删除记录" @click="store.removeLiveRecord(item.liveId)">
-                <Trash2 :size="14" />
-              </button>
+              <div class="history-actions">
+                <button class="small-icon" title="查看曲线" @click="openHistoryChart(item)">
+                  <LineChart :size="14" />
+                </button>
+                <button class="small-icon danger" title="删除记录" @click="store.removeLiveRecord(item.liveId)">
+                  <Trash2 :size="14" />
+                </button>
+              </div>
             </article>
           </div>
           <div v-else class="empty-state compact-empty">关播后会自动保存每场直播统计。</div>
@@ -650,24 +755,80 @@
           </div>
         </div>
       </Teleport>
+
+      <div v-if="historyChartRecord" class="modal-backdrop" @click.self="historyChartRecord = null">
+        <div class="modal-card history-chart-modal">
+          <div class="modal-head">
+            <h3>{{ historyChartRecord.title || historyChartRecord.liveId }} 曲线</h3>
+            <button class="small-icon" title="关闭" @click="historyChartRecord = null"><X :size="16" /></button>
+          </div>
+          <div v-if="historyChartSeries.points.length >= 2" class="history-chart">
+            <svg
+              viewBox="0 0 720 260"
+              role="img"
+              aria-label="直播观众数和弹幕数曲线"
+              @mousemove="updateHistoryChartHover"
+              @mouseleave="historyChartHover = null"
+            >
+              <g class="history-chart-grid">
+                <line v-for="y in historyChartGridY" :key="y" x1="40" :y1="y" x2="700" :y2="y" />
+              </g>
+              <polyline class="history-chart-line online" :points="historyChartSeries.onlinePoints" />
+              <polyline class="history-chart-line danmaku" :points="historyChartSeries.danmakuPoints" />
+              <g class="history-chart-axis">
+                <line x1="40" y1="220" x2="700" y2="220" />
+                <line x1="40" y1="24" x2="40" y2="220" />
+              </g>
+              <g v-if="historyChartHover" class="history-chart-hover">
+                <line :x1="historyChartHover.x" y1="24" :x2="historyChartHover.x" y2="220" />
+                <circle :cx="historyChartHover.x" :cy="historyChartHover.onlineY" r="4" class="online" />
+                <circle :cx="historyChartHover.x" :cy="historyChartHover.danmakuY" r="4" class="danmaku" />
+                <foreignObject :x="historyChartHover.tooltipX" :y="historyChartHover.tooltipY" width="168" height="76">
+                  <div class="history-chart-tooltip">
+                    <strong>{{ historyChartHover.timeText }}</strong>
+                    <span class="online">观众 {{ historyChartHover.onlineCount }}</span>
+                    <span class="danmaku">{{ historyDanmakuChartText }} {{ historyChartHover.danmakuValue }}{{ historyDanmakuChartUnit }}</span>
+                  </div>
+                </foreignObject>
+              </g>
+            </svg>
+            <div class="history-chart-legend">
+              <span><i class="online"></i>观众数</span>
+              <span><i class="danmaku"></i>{{ historyDanmakuChartText }}{{ historyDanmakuChartUnit }}</span>
+              <span>采样点 {{ historyChartSeries.points.length }}</span>
+              <button class="history-chart-toggle" @click="toggleHistoryDanmakuChartMode">
+                切换为{{ historyDanmakuChartMode === "delta" ? "累计弹幕数" : "弹幕增量" }}
+              </button>
+            </div>
+          </div>
+          <div v-else class="empty-state">这场直播暂无曲线数据，之后关播保存的场次会记录曲线。</div>
+        </div>
+      </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue"
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue"
 import {
   Activity,
   Ban,
   ChartBar,
   Clipboard,
+  Eye,
+  EyeOff,
   ExternalLink,
   FolderOpen,
+  Heart,
   ImageUp,
   KeyRound,
+  LineChart,
   ListTree,
   LogOut,
+  Moon,
   MonitorPlay,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   PlugZap,
   QrCode,
@@ -682,6 +843,7 @@ import {
   ShieldMinus,
   ShieldPlus,
   Square,
+  Sun,
   Trash2,
   User,
   Users,
@@ -690,6 +852,7 @@ import {
   X,
 } from "@lucide/vue"
 import { useLiveStore } from "@/stores/liveStore"
+import HsvColorPicker from "@/components/HsvColorPicker.vue"
 import {
   copyText,
   getBackendPort,
@@ -711,10 +874,179 @@ const loginForm = reactive({
   password: "",
 })
 const commentText = ref("")
+const commentInputRef = ref(null)
 const coverPreviewSrc = ref("")
 const overlayBaseUrl = ref("")
 const logPath = ref("")
 const systemFonts = ref(["Microsoft YaHei", "Noto Sans SC", "Segoe UI", "Arial", "sans-serif"])
+const previewPlaceholder = { id: 0, nickname: "AcFun用户", content: "这是一条弹幕预览，样式会同步到 OBS 浏览器源。" }
+const previewItems = ref([previewPlaceholder])
+let previewItemSeq = 1
+const previewPool = [
+  { nickname: "AC娘亲卫队", content: "认真你就输啦，AC娘镇楼" },
+  { nickname: "蕉皇驾到", content: "已投三根香蕉，主播加油" },
+  { nickname: "鬼畜全明星", content: "鬼畜全明星永远的神" },
+  { nickname: "鬼畜区路人", content: "这素材建议剪个金坷垃版本" },
+  { nickname: "滑板鞋赛车手", content: "摩擦摩擦，魔鬼的步伐" },
+  { nickname: "荼荼丸门徒", content: "求音MAD大佬来调教这段" },
+  { nickname: "严选娘粉", content: "严选娘和TD娘同框可还行" },
+  { nickname: "阿婵小护卫", content: "阿婵今天也是元气满满" },
+  { nickname: "镇站之宝", content: "主播是新晋镇站之宝，233333" },
+  { nickname: "白屏受害者", content: "AC娘是不是又大姨妈了" },
+  { nickname: "二次元绅士", content: "我从未见过如此厚颜无耻之人" },
+  { nickname: "雷电法王", content: "阿妹你看，上帝压狗" },
+  { nickname: "弹幕护体", content: "弹幕护体，雪豹闭嘴！" },
+  { nickname: "前方高能", content: "高能预警，先打个码再看" },
+  { nickname: "老司机带带我", content: "233333 主播带带我飞" },
+  { nickname: "硬核绅士", content: "内容很硬核，再送主播一根香蕉" },
+  { nickname: "数码玩家", content: "视频清晰度爆表，资讯量真足" },
+  { nickname: "网络冲浪手", content: "网络稳得一批，全程零卡顿" },
+  { nickname: "码农路过", content: "建议主播换台计算机，性能更猛" },
+  { nickname: "新软件迷", content: "求主播推荐一款好用的软件" },
+  { nickname: "信息搬运工", content: "这条信息更新得太快了吧" },
+  { nickname: "光速摸鱼", content: "激光秀拉满，眼睛要瞎啦" },
+  { nickname: "数据党", content: "数据太顶，必须收藏起来反复看" },
+  { nickname: "审核辛苦组", content: "审核大大辛苦了，求过审" },
+  { nickname: "天下漫友", content: "天下漫友是一家，干杯！" },
+  { nickname: "猴山老AC", content: "当年猴山的味道又回来了" },
+  { nickname: "番剧爱好者", content: "看完番剧顺手摸进直播间" },
+  { nickname: "弹幕大军", content: "然而并没有什么卵用，233" },
+  { nickname: "永恒老粉", content: "我永远喜欢AC娘，永远的家" },
+  { nickname: "投蕉路过", content: "路过投蕉，主播继续冲" },
+  { nickname: "鸡盒肥肥", content: "单刷鸡盒" },
+  { nickname: "休斯顿", content: "休斯顿，我们有麻烦了" },
+  { nickname: "倒计时", content: "倒计时-发射成功" },
+  { nickname: "发射员", content: "倒计时-发射失败-等等" },
+  { nickname: "SAGE", content: "吃我SAGE啦" },
+  { nickname: "MC石头", content: "认准唯一QQ" },
+  { nickname: "嗨呀酱", content: "嗨呀我又来这个串了" },
+  { nickname: "欢乐jb", content: "我好高兴，因为我是欢乐jb" },
+  { nickname: "卧铺肥肥", content: "一上火车就大喊，嗨呀我又来坐卧铺了" },
+  { nickname: "po主", content: "我每天来这个串看看po有没有更新的ᕕ( ᐛ )ᕗ" },
+  { nickname: "阴阳酱", content: "(　^ω^)(　ˇωˇ)" },
+  { nickname: "小殇君", content: "(｡◕∀◕｡)" },
+  { nickname: "弱智酱", content: "( ﾟ∀。) 这怎么回事" },
+  { nickname: "牛子", content: "(つд⊂)" },
+  { nickname: "齐齐蛤尔", content: "(`ヮ´ )σ`∀´) ﾟ∀ﾟ)σ" },
+  { nickname: "忧郁傻卵", content: "( ·_ゝ·)" },
+  { nickname: "举高高", content: "(ノﾟ∀ﾟ)ノ 生日快乐" },
+  { nickname: "電柱", content: "┃電柱┃д⊂)" },
+  { nickname: "口水酱", content: "( ´ρ`)" },
+  { nickname: "打脸酱", content: "⊂彡☆))д`)" },
+  { nickname: "喂我酱", content: "σ( ᑒ )" },
+  { nickname: "防剧透", content: "[h]这里是防剧透文字[/h]" },
+]
+const aIslandEmotes = [
+  "|∀ﾟ",
+  "(´ﾟДﾟ`)",
+  "(;´Д`)",
+  "(｀･ω･)",
+  "(=ﾟωﾟ)=",
+  "| ω・´)",
+  "|-` )",
+  "|д` )",
+  "|ー` )",
+  "|∀` )",
+  "(つд⊂)",
+  "(ﾟДﾟ≡ﾟДﾟ)",
+  "(＾o＾)ﾉ",
+  "(|||ﾟДﾟ)",
+  "( ﾟ∀ﾟ)",
+  "( ´∀`)",
+  "(*´∀`)",
+  "(*ﾟ∇ﾟ)",
+  "(*ﾟーﾟ)",
+  "(　ﾟ 3ﾟ)",
+  "( ´ー`)",
+  "( ・_ゝ・)",
+  "( ´_ゝ`)",
+  "(*´д`)",
+  "(・ー・)",
+  "(・∀・)",
+  "(ゝ∀･)",
+  "(〃∀〃)",
+  "(*ﾟ∀ﾟ*)",
+  "( ﾟ∀。)",
+  "( `д´)",
+  "(`ε´ )",
+  "(`ヮ´ )",
+  "σ`∀´)",
+  " ﾟ∀ﾟ)σ",
+  "ﾟ ∀ﾟ)ノ",
+  "(╬ﾟдﾟ)",
+  "(|||ﾟдﾟ)",
+  "( ﾟдﾟ)",
+  "Σ( ﾟдﾟ)",
+  "( ;ﾟдﾟ)",
+  "( ;´д`)",
+  "(　д ) ﾟ ﾟ",
+  "( ☉д⊙)",
+  "(((　ﾟдﾟ)))",
+  "( ` ・´)",
+  "( ´д`)",
+  "( -д-)",
+  "(>д<)",
+  "･ﾟ( ﾉд`ﾟ)",
+  "( TдT)",
+  "(￣∇￣)",
+  "(￣3￣)",
+  "(￣ｰ￣)",
+  "(￣ . ￣)",
+  "(￣皿￣)",
+  "(￣艸￣)",
+  "(￣︿￣)",
+  "(￣︶￣)",
+  "ヾ(´ωﾟ｀)",
+  "(*´ω`*)",
+  "(・ω・)",
+  "( ´・ω)",
+  "(｀・ω)",
+  "(´・ω・`)",
+  "(`・ω・´)",
+  "( `_っ´)",
+  "( `ー´)",
+  "( ´_っ`)",
+  "( ´ρ`)",
+  "( ﾟωﾟ)",
+  "(oﾟωﾟo)",
+  "(　^ω^)",
+  "(｡◕∀◕｡)",
+  "/( ◕‿‿◕ )\\",
+  "ヾ(´ε`ヾ)",
+  "(ノﾟ∀ﾟ)ノ",
+  "(σﾟдﾟ)σ",
+  "(σﾟ∀ﾟ)σ",
+  "|дﾟ )",
+  "┃電柱┃",
+  "ﾟ(つд`ﾟ)",
+  "ﾟÅﾟ )　",
+  "⊂彡☆))д`)",
+  "⊂彡☆))д´)",
+  "⊂彡☆))∀`)",
+  "(´∀((☆ミつ",
+  "･ﾟ( ﾉヮ´ )",
+  "(ﾉ)`ω´(ヾ)",
+  "ᕕ( ᐛ )ᕗ",
+  "(　ˇωˇ)",
+  "( ｣ﾟДﾟ)｣＜",
+  "( ›´ω`‹ )",
+  "(;´ヮ`)7",
+  "(`ゥ´ )",
+  "(`ᝫ´ )",
+  "( ᑭ`д´)ᓀ))д´)ᑫ",
+  "σ( ᑒ )",
+  "(`ヮ´ )σ`∀´) ﾟ∀ﾟ)σ",
+  "吁~~~~　　rnm，退钱！\n　　　/　　　/ \n(　ﾟ 3ﾟ) `ー´) `д´) `д´)",
+  "[h] [/h]",
+  "[n]",
+  "[n,m]",
+]
+const previewConverter = ref((text) => text)
+const streamKeyVisible = ref(false)
+const uiScalePercent = ref(100)
+const isExtremeNarrowSidebar = ref(false)
+const sidebarToggleFlash = ref(false)
+const sidebarHearts = ref([])
 const coverImageReady = ref(false)
 const coverImageRef = ref(null)
 const coverCrop = reactive({
@@ -731,6 +1063,9 @@ const initialCrop = reactive({
 const cropModalOpen = ref(false)
 const cropModalRef = ref(null)
 const coverDragging = ref(false)
+const historyChartRecord = ref(null)
+const historyChartHover = ref(null)
+const historyDanmakuChartMode = ref("delta")
 
 const tabs = [
   { id: "account", label: "账号", subtitle: "登录 AcFun 并连接 acfunlive-backend", icon: User },
@@ -744,6 +1079,24 @@ const tabs = [
 const currentTab = computed(() => tabs.find((item) => item.id === store.activeTab) || tabs[0])
 const subtitleParts = computed(() => highlightAcfun(currentTab.value.subtitle))
 const userInitial = computed(() => (store.userName || "A").trim().slice(0, 1).toUpperCase())
+const themeIcon = computed(() => store.ui.theme === "dark" ? Sun : Moon)
+const sidebarToggleIcon = computed(() => {
+  if (isExtremeNarrowSidebar.value) {
+    return Heart
+  }
+  return store.ui.sidebarCollapsed ? PanelLeftOpen : PanelLeftClose
+})
+const sidebarToggleTitle = computed(() => {
+  if (isExtremeNarrowSidebar.value) {
+    return "点赞"
+  }
+  return store.ui.sidebarCollapsed ? "展开侧栏" : "折叠侧栏"
+})
+const appShellStyle = computed(() => ({
+  zoom: store.ui.uiScale,
+  "--ui-scale-percent": uiScalePercent.value,
+  "--ui-scale-fill": `${uiScalePercent.value - 50}%`,
+}))
 const isGifCover = computed(() => isGifFile(store.live.coverFile))
 const coverAspectRatio = computed(() => store.live.coverAspect === "16:9" ? 16 / 9 : 16 / 10)
 const coverAspectStyle = computed(() => ({ aspectRatio: String(coverAspectRatio.value) }))
@@ -794,6 +1147,53 @@ const obsToggleLabel = computed(() => {
   return "OBS 推流"
 })
 const obsToggleIcon = computed(() => (store.obs.streaming ? Square : Radio))
+const historyDanmakuChartText = computed(() => historyDanmakuChartMode.value === "delta" ? "弹幕增量" : "累计弹幕数")
+const historyDanmakuChartUnit = computed(() => historyDanmakuChartMode.value === "delta" ? "/分钟" : "")
+const historyChartGridY = [56, 96, 136, 176, 220]
+const historyChartSeries = computed(() => {
+  const points = Array.isArray(historyChartRecord.value?.timeline) ? historyChartRecord.value.timeline : []
+  const normalized = points
+    .map((item) => ({
+      time: Number(item.time || 0),
+      onlineCount: Number(item.onlineCount || 0),
+      danmakuCount: Number(item.danmakuCount || 0),
+    }))
+    .filter((item) => item.time > 0)
+    .sort((a, b) => a.time - b.time)
+  if (normalized.length < 2) {
+    return { points: normalized, onlinePoints: "", danmakuPoints: "" }
+  }
+  const withDelta = normalized.map((item, index) => {
+    const previous = normalized[index - 1]
+    if (!previous) {
+      return { ...item, danmakuDelta: 0 }
+    }
+    const countDelta = Math.max(0, item.danmakuCount - previous.danmakuCount)
+    const minutes = Math.max((item.time - previous.time) / 60000, 1 / 60)
+    return { ...item, danmakuDelta: Math.round(countDelta / minutes) }
+  })
+  const firstTime = normalized[0].time
+  const lastTime = normalized[normalized.length - 1].time
+  const timeRange = Math.max(1, lastTime - firstTime)
+  const maxOnline = Math.max(1, ...normalized.map((item) => item.onlineCount))
+  const danmakuKey = historyDanmakuChartMode.value === "delta" ? "danmakuDelta" : "danmakuCount"
+  const maxDanmaku = Math.max(1, ...withDelta.map((item) => item[danmakuKey]))
+  const chartPoints = withDelta.map((item) => ({
+    ...item,
+    danmakuValue: item[danmakuKey],
+    x: 40 + ((item.time - firstTime) / timeRange) * 660,
+    onlineY: 220 - (item.onlineCount / maxOnline) * 196,
+    danmakuY: 220 - (item[danmakuKey] / maxDanmaku) * 196,
+  }))
+  const toPolyline = (key) => chartPoints
+    .map((item) => `${item.x.toFixed(1)},${item[key].toFixed(1)}`)
+    .join(" ")
+  return {
+    points: chartPoints,
+    onlinePoints: toPolyline("onlineY"),
+    danmakuPoints: toPolyline("danmakuY"),
+  }
+})
 function obsToggleStream() {
   if (store.obs.streaming) {
     run(() => store.stopObsStream(), "OBS 已停推")
@@ -804,6 +1204,128 @@ function obsToggleStream() {
     )
   }
 }
+
+function openHistoryChart(item) {
+  historyChartRecord.value = item
+  historyChartHover.value = null
+}
+
+function toggleHistoryDanmakuChartMode() {
+  historyDanmakuChartMode.value = historyDanmakuChartMode.value === "delta" ? "total" : "delta"
+  historyChartHover.value = null
+}
+
+function updateHistoryChartHover(event) {
+  const points = historyChartSeries.value.points
+  if (!points.length) {
+    historyChartHover.value = null
+    return
+  }
+  const rect = event.currentTarget.getBoundingClientRect()
+  const x = ((event.clientX - rect.left) / rect.width) * 720
+  const nearest = points.reduce((best, item) => Math.abs(item.x - x) < Math.abs(best.x - x) ? item : best, points[0])
+  historyChartHover.value = {
+    ...nearest,
+    tooltipX: Math.min(532, Math.max(44, nearest.x + 10)),
+    tooltipY: Math.max(28, Math.min(172, Math.min(nearest.onlineY, nearest.danmakuY) - 38)),
+    timeText: new Date(nearest.time).toLocaleTimeString(),
+  }
+}
+
+function applyUiScale() {
+  const nextScale = Math.min(150, Math.max(50, Number(uiScalePercent.value) || 100))
+  uiScalePercent.value = nextScale
+  store.setUiScale(nextScale / 100)
+}
+
+function resetUiScale() {
+  uiScalePercent.value = 100
+  store.setUiScale(1)
+}
+
+let sidebarToggleFlashTimer = 0
+let sidebarHeartSeq = 0
+
+function updateExtremeNarrowSidebar() {
+  isExtremeNarrowSidebar.value = window.innerWidth <= 480
+}
+
+function handleSidebarToggle() {
+  if (!isExtremeNarrowSidebar.value) {
+    store.toggleSidebar()
+    return
+  }
+  sidebarToggleFlash.value = false
+  window.clearTimeout(sidebarToggleFlashTimer)
+  const heart = {
+    id: sidebarHeartSeq++,
+    x: Math.round(Math.random() * 18 - 9),
+    scale: (0.88 + Math.random() * 0.28).toFixed(2),
+  }
+  sidebarHearts.value = [...sidebarHearts.value.slice(-5), heart]
+  window.requestAnimationFrame(() => {
+    sidebarToggleFlash.value = true
+    sidebarToggleFlashTimer = window.setTimeout(() => {
+      sidebarToggleFlash.value = false
+    }, 180)
+  })
+  window.setTimeout(() => {
+    sidebarHearts.value = sidebarHearts.value.filter((item) => item.id !== heart.id)
+  }, 760)
+}
+
+function replayOverlayPreview() {
+  const sample = previewPool[Math.floor(Math.random() * previewPool.length)]
+  const newItem = { id: previewItemSeq++, nickname: sample.nickname, content: sample.content }
+  previewItems.value = [newItem, ...previewItems.value].slice(0, 3)
+}
+
+function avatarInitial(nickname) {
+  const text = String(nickname || "A").trim()
+  return (text.slice(0, 1) || "A").toUpperCase()
+}
+
+function convertPreviewText(text) {
+  const value = String(text || "")
+  if (!value) return ""
+  try {
+    return previewConverter.value(value)
+  } catch (_) {
+    return value
+  }
+}
+
+async function loadPreviewConverter() {
+  const mode = store.overlay.convertChinese
+  if (!mode || mode === "none") {
+    previewConverter.value = (text) => text
+    return
+  }
+  try {
+    if (!window.OpenCC) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement("script")
+        script.src = "https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js"
+        script.onload = resolve
+        script.onerror = reject
+        document.head.appendChild(script)
+      })
+    }
+    const opts = mode === "s2t" ? { from: "cn", to: "twp" } : { from: "twp", to: "cn" }
+    previewConverter.value = window.OpenCC.Converter(opts)
+  } catch (_) {
+    previewConverter.value = (text) => text
+  }
+}
+
+watch(() => store.overlay.convertChinese, () => loadPreviewConverter(), { immediate: true })
+watch(() => store.ui.uiScale, (value) => {
+  uiScalePercent.value = Math.round((Number(value) || 1) * 100)
+}, { immediate: true })
+watch(() => store.ui.theme, (theme) => {
+  document.documentElement.dataset.theme = theme
+}, { immediate: true })
+
 const obsStatusText = computed(() => {
   if (store.obs.autoStartStatus === "waiting") {
     return "等待流"
@@ -825,11 +1347,112 @@ const obsStatusText = computed(() => {
 const overlayPreviewStyle = computed(() => ({
   "--overlay-font-size": `${store.overlay.fontSize}px`,
   "--overlay-font-family": store.overlay.fontFamily,
+  "--overlay-name-font-family": overlayFontFamily(store.overlay.nameFontFamily || store.overlay.fontFamily),
+  "--overlay-name-font-weight": overlayFontWeight(store.overlay.nameFontFamily || store.overlay.fontFamily, 800),
+  "--overlay-content-font-family": overlayFontFamily(store.overlay.contentFontFamily || store.overlay.fontFamily),
+  "--overlay-content-font-weight": overlayFontWeight(store.overlay.contentFontFamily || store.overlay.fontFamily, 700),
   "--overlay-text-color": store.overlay.textColor,
   "--overlay-name-color": store.overlay.nameColor,
   "--overlay-bubble-color": store.overlay.bubbleColor,
   "--overlay-rounded": `${store.overlay.rounded}px`,
 }))
+
+function parseOverlayFont(font, defaultWeight = "inherit") {
+  const value = String(font || "").trim()
+  const weights = [
+    ["ExtraLight", 200],
+    ["UltraLight", 200],
+    ["DemiLight", 300],
+    ["SemiLight", 300],
+    ["Light", 300],
+    ["Regular", 400],
+    ["Normal", 400],
+    ["Medium", 500],
+    ["DemiBold", 600],
+    ["SemiBold", 600],
+    ["Bold", 700],
+    ["ExtraBold", 800],
+    ["UltraBold", 800],
+    ["Heavy", 900],
+    ["Black", 900],
+    ["EL", 200],
+    ["L", 300],
+    ["N", 400],
+    ["M", 500],
+    ["H", 900],
+    ["Italic", 400],
+    ["特细", 200],
+    ["纤细", 200],
+    ["细体", 300],
+    ["细", 300],
+    ["常规", 400],
+    ["标准", 400],
+    ["中等", 500],
+    ["中黑", 500],
+    ["半粗", 600],
+    ["半黑", 600],
+    ["粗体", 700],
+    ["粗", 700],
+    ["特粗", 800],
+    ["特黑", 800],
+    ["重", 900],
+    ["重黑", 900],
+  ]
+  for (const [suffix, weight] of weights) {
+    const pattern = new RegExp(`\\s+${escapeRegex(suffix)}(?:\\s+Italic)?$`, "i")
+    if (pattern.test(value)) {
+      const family = splitFontNames(value).map((name) => name.replace(pattern, "").trim() || name).join(" & ")
+      return {
+        family: fontFamilyCandidates(family, value),
+        weight,
+      }
+    }
+  }
+  return {
+    family: fontFamilyCandidates(value),
+    weight: defaultWeight,
+  }
+}
+
+function overlayFontFamily(font) {
+  return parseOverlayFont(font).family
+}
+
+function overlayFontWeight(font, defaultWeight) {
+  return parseOverlayFont(font, defaultWeight).weight
+}
+
+function quoteFontFamily(font) {
+  const value = String(font || "").trim()
+  if (/^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/i.test(value)) return value
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`
+}
+
+function fontFamilyCandidates(...fonts) {
+  const candidates = []
+  for (const font of fonts) {
+    for (const name of splitFontNames(font)) {
+      candidates.push(name)
+      if (/思源宋体|思源宋體|Source Han Serif/i.test(name)) {
+        candidates.push("思源宋体", "思源宋體", "Source Han Serif", "Source Han Serif K", "Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif SC", "serif")
+      } else if (/思源等宽|思源等寬|Source Han Mono|Noto Sans Mono CJK|Noto Sans Mono/i.test(name)) {
+        candidates.push("思源等宽", "思源等寬", "Source Han Mono", "Source Han Mono K", "Source Han Mono SC", "Noto Sans Mono CJK SC", "Noto Sans Mono SC", "monospace")
+      } else if (/思源黑体|思源黑體|Source Han Sans/i.test(name)) {
+        candidates.push("思源黑体", "思源黑體", "Source Han Sans", "Source Han Sans K", "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", "sans-serif")
+      }
+    }
+  }
+  return Array.from(new Set(candidates)).map(quoteFontFamily).join(", ")
+}
+
+function splitFontNames(font) {
+  return String(font || "").split(/\s*&\s*/).map((name) => name.trim()).filter(Boolean)
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 const qrImageSrc = computed(() => store.qrLogin.imageData ? `data:image/png;base64,${store.qrLogin.imageData}` : "")
 const qrStatusText = computed(() => {
   if (store.qrLogin.status === "waiting") {
@@ -860,6 +1483,8 @@ let refreshTimer = 0
 let coverPreviewRequest = 0
 
 onMounted(async () => {
+  updateExtremeNarrowSidebar()
+  window.addEventListener("resize", updateExtremeNarrowSidebar)
   await initializeNativeRuntime()
   store.restoreObsConnection().catch(() => {})
   await store.restoreSession()
@@ -873,7 +1498,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  store.rememberObsConnectionForNextLaunch()
   window.clearInterval(refreshTimer)
+  window.clearTimeout(sidebarToggleFlashTimer)
+  window.removeEventListener("resize", updateExtremeNarrowSidebar)
 })
 
 async function initializeNativeRuntime() {
@@ -1200,6 +1828,24 @@ async function sendComment() {
     await store.sendComment(commentText.value)
     commentText.value = ""
   }, "弹幕已发送")
+}
+
+async function insertAIslandEmote(value, selectEl) {
+  const emote = String(value || "")
+  if (!emote) return
+  const input = commentInputRef.value
+  if (!input) {
+    commentText.value += emote
+    if (selectEl) selectEl.value = ""
+    return
+  }
+  const start = input.selectionStart ?? commentText.value.length
+  const end = input.selectionEnd ?? start
+  commentText.value = `${commentText.value.slice(0, start)}${emote}${commentText.value.slice(end)}`
+  await nextTick()
+  input.focus()
+  input.setSelectionRange(start + emote.length, start + emote.length)
+  if (selectEl) selectEl.value = ""
 }
 
 async function startQrLogin() {

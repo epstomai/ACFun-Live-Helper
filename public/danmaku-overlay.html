@@ -8,6 +8,10 @@
       :root {
         --font-size: 18px;
         --font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
+        --name-font-family: var(--font-family);
+        --name-font-weight: 800;
+        --content-font-family: var(--font-family);
+        --content-font-weight: 700;
         --text-color: #ffffff;
         --name-color: #fd4c5d;
         --bubble-color: rgba(36, 27, 32, 0.78);
@@ -106,8 +110,9 @@
         display: block;
         margin-bottom: 2px;
         color: var(--name-color);
+        font-family: var(--name-font-family);
         font-size: 0.82em;
-        font-weight: 800;
+        font-weight: var(--name-font-weight);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -115,7 +120,8 @@
 
       .content {
         overflow-wrap: anywhere;
-        font-weight: 700;
+        font-family: var(--content-font-family);
+        font-weight: var(--content-font-weight);
       }
 
       .gift {
@@ -222,6 +228,8 @@
           maxItems: 18,
           fontSize: 18,
           fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
+          nameFontFamily: "",
+          contentFontFamily: "",
           textColor: "#ffffff",
           nameColor: "#fd4c5d",
           bubbleColor: "rgba(36, 27, 32, 0.78)",
@@ -230,6 +238,7 @@
           animation: "slide",
           rounded: 18,
           gap: 10,
+          convertChinese: "none",
           ...decodeBase64Json(params.get("style")),
         },
         requestSeed: 0,
@@ -241,6 +250,7 @@
       }
 
       applyStyle()
+      ensureChineseConverter()
       connect()
 
       function decodeBase64Json(value) {
@@ -259,13 +269,144 @@
       }
 
       function applyStyle() {
+        const nameFont = parseFontVariant(state.style.nameFontFamily || state.style.fontFamily, 800)
+        const contentFont = parseFontVariant(state.style.contentFontFamily || state.style.fontFamily, 700)
         document.documentElement.style.setProperty("--font-size", `${state.style.fontSize}px`)
         document.documentElement.style.setProperty("--font-family", state.style.fontFamily)
+        document.documentElement.style.setProperty("--name-font-family", nameFont.family)
+        document.documentElement.style.setProperty("--name-font-weight", nameFont.weight)
+        document.documentElement.style.setProperty("--content-font-family", contentFont.family)
+        document.documentElement.style.setProperty("--content-font-weight", contentFont.weight)
         document.documentElement.style.setProperty("--text-color", state.style.textColor)
         document.documentElement.style.setProperty("--name-color", state.style.nameColor)
         document.documentElement.style.setProperty("--bubble-color", state.style.bubbleColor)
         document.documentElement.style.setProperty("--rounded", `${state.style.rounded}px`)
         document.documentElement.style.setProperty("--gap", `${state.style.gap}px`)
+      }
+
+      let chineseConverter = (text) => text
+
+      async function ensureChineseConverter() {
+        const mode = state.style.convertChinese
+        if (!mode || mode === "none") {
+          chineseConverter = (text) => text
+          return
+        }
+        try {
+          if (!window.OpenCC) {
+            await new Promise((resolve, reject) => {
+              const script = document.createElement("script")
+              script.src = "https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js"
+              script.onload = resolve
+              script.onerror = reject
+              document.head.appendChild(script)
+            })
+          }
+          const opts = mode === "s2t" ? { from: "cn", to: "twp" } : { from: "twp", to: "cn" }
+          chineseConverter = window.OpenCC.Converter(opts)
+        } catch (_) {
+          chineseConverter = (text) => text
+        }
+      }
+
+      function convertChineseText(text) {
+        const value = String(text || "")
+        if (!value) {
+          return ""
+        }
+        try {
+          return chineseConverter(value)
+        } catch (_) {
+          return value
+        }
+      }
+
+      function parseFontVariant(font, defaultWeight) {
+        const value = String(font || "").trim()
+        const weights = [
+          ["ExtraLight", 200],
+          ["UltraLight", 200],
+          ["DemiLight", 300],
+          ["SemiLight", 300],
+          ["Light", 300],
+          ["Regular", 400],
+          ["Normal", 400],
+          ["Medium", 500],
+          ["DemiBold", 600],
+          ["SemiBold", 600],
+          ["Bold", 700],
+          ["ExtraBold", 800],
+          ["UltraBold", 800],
+          ["Heavy", 900],
+          ["Black", 900],
+          ["EL", 200],
+          ["L", 300],
+          ["N", 400],
+          ["M", 500],
+          ["H", 900],
+          ["Italic", 400],
+          ["特细", 200],
+          ["纤细", 200],
+          ["细体", 300],
+          ["细", 300],
+          ["常规", 400],
+          ["标准", 400],
+          ["中等", 500],
+          ["中黑", 500],
+          ["半粗", 600],
+          ["半黑", 600],
+          ["粗体", 700],
+          ["粗", 700],
+          ["特粗", 800],
+          ["特黑", 800],
+          ["重", 900],
+          ["重黑", 900],
+        ]
+        for (const [suffix, weight] of weights) {
+          const pattern = new RegExp(`\\s+${escapeRegex(suffix)}(?:\\s+Italic)?$`, "i")
+          if (pattern.test(value)) {
+            const family = splitFontNames(value).map((name) => name.replace(pattern, "").trim() || name).join(" & ")
+            return {
+              family: fontFamilyCandidates(family, value),
+              weight,
+            }
+          }
+        }
+        return {
+          family: fontFamilyCandidates(value),
+          weight: defaultWeight,
+        }
+      }
+
+      function quoteFontFamily(font) {
+        const value = String(font || "").trim()
+        if (/^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/i.test(value)) return value
+        return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`
+      }
+
+      function fontFamilyCandidates(...fonts) {
+        const candidates = []
+        for (const font of fonts) {
+          for (const name of splitFontNames(font)) {
+            candidates.push(name)
+            if (/思源宋体|思源宋體|Source Han Serif/i.test(name)) {
+              candidates.push("思源宋体", "思源宋體", "Source Han Serif", "Source Han Serif K", "Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif SC", "serif")
+            } else if (/思源等宽|思源等寬|Source Han Mono|Noto Sans Mono CJK|Noto Sans Mono/i.test(name)) {
+              candidates.push("思源等宽", "思源等寬", "Source Han Mono", "Source Han Mono K", "Source Han Mono SC", "Noto Sans Mono CJK SC", "Noto Sans Mono SC", "monospace")
+            } else if (/思源黑体|思源黑體|Source Han Sans/i.test(name)) {
+              candidates.push("思源黑体", "思源黑體", "Source Han Sans", "Source Han Sans K", "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", "sans-serif")
+            }
+          }
+        }
+        return Array.from(new Set(candidates)).map(quoteFontFamily).join(", ")
+      }
+
+      function splitFontNames(font) {
+        return String(font || "").split(/\s*&\s*/).map((name) => name.trim()).filter(Boolean)
+      }
+
+      function escapeRegex(value) {
+        return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       }
 
       function connect() {
@@ -498,10 +639,10 @@
         body.className = "body"
         const name = document.createElement("strong")
         name.className = "name"
-        name.textContent = item.nickname
+        name.textContent = convertChineseText(item.nickname)
         const content = document.createElement("div")
         content.className = item.isGift ? "content gift" : "content"
-        content.textContent = item.content
+        content.textContent = convertChineseText(item.content)
         body.append(name, content)
         article.appendChild(body)
         feed.appendChild(article)

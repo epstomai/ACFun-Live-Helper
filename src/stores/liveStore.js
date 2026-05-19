@@ -16,6 +16,7 @@ let obsClient = null
 let obsClientKey = ""
 let obsClientUnsubscribers = []
 let obsObservedStreaming = false
+let obsPreserveRestoreOnClose = false
 
 function loadSavedState() {
   try {
@@ -99,9 +100,11 @@ function summaryRecord(summary, live = {}) {
     duration: summary.duration || "00:00:00",
     watchCount: summary.watchCount || 0,
     likeCount: summary.likeCount || 0,
+    danmakuCount: summary.danmakuCount || 0,
     diamond: summary.diamond || 0,
     gift: summary.gift || 0,
     banana: summary.banana || 0,
+    timeline: Array.isArray(summary.timeline) ? summary.timeline : [],
   }
 }
 
@@ -151,11 +154,45 @@ function renderCroppedDataUrl(sourceDataUrl, crop) {
   })
 }
 
+function demoLiveHistoryRecord() {
+  const baseTime = Date.now() - 1000 * 60 * 30
+  let danmakuCount = 0
+  const timeline = Array.from({ length: 61 }, (_, index) => {
+    const onlineCount = Math.max(0, Math.round(24 + index * 3.4 + Math.sin(index / 3) * 18 + Math.sin(index / 9) * 32))
+    danmakuCount += Math.max(0, Math.round(2 + Math.sin(index / 2) * 2 + index / 9))
+    return {
+      time: baseTime + index * 30 * 1000,
+      onlineCount,
+      danmakuCount,
+    }
+  })
+  const lastPoint = timeline[timeline.length - 1]
+  return {
+    id: "demo-live-history-chart",
+    liveId: "demo-live-history-chart",
+    title: "测试直播曲线数据",
+    coverFile: "",
+    endedAt: new Date(baseTime + 30 * 60 * 1000).toLocaleString(),
+    endReason: "demo",
+    duration: "00:30:00",
+    watchCount: lastPoint.onlineCount,
+    likeCount: 862,
+    danmakuCount: lastPoint.danmakuCount,
+    diamond: 128,
+    gift: 36,
+    banana: 52,
+    timeline,
+  }
+}
+
 function defaultState() {
   const saved = loadSavedState()
-  const savedProfile = saved.userProfile || {}
-  const savedObs = saved.obs || {}
   const savedOverlay = saved.overlay || {}
+  const savedObs = saved.obs || {}
+  const savedUi = saved.ui || {}
+  const savedProfile = saved.userProfile || {}
+  const demoHistory = demoLiveHistoryRecord()
+  const savedLiveHistory = Array.isArray(saved.liveHistory) ? saved.liveHistory : []
   return {
     backendUrl: saved.backendUrl || "ws://localhost:15368/",
     connected: false,
@@ -200,6 +237,7 @@ function defaultState() {
       password: savedObs.password || "",
       connected: false,
       streaming: false,
+      shouldRestoreConnection: savedObs.shouldRestoreConnection || false,
       lastStreamStopped: false,
       autoStartLive: savedObs.autoStartLive !== false,
       stopStreamingAfterClose: savedObs.stopStreamingAfterClose || false,
@@ -215,15 +253,22 @@ function defaultState() {
       banana: 0,
       watchCount: 0,
       likeCount: 0,
+      danmakuCount: 0,
       duration: "00:00:00",
+      timeline: [],
     },
-    liveHistory: saved.liveHistory || [],
+    liveHistory: [
+      demoHistory,
+      ...savedLiveHistory.filter((item) => item.liveId !== demoHistory.liveId),
+    ].slice(0, 100),
     overlay: {
       width: savedOverlay.width || 420,
       height: savedOverlay.height || 720,
       maxItems: savedOverlay.maxItems || 18,
       fontSize: savedOverlay.fontSize || 18,
       fontFamily: savedOverlay.fontFamily || "Microsoft YaHei, Noto Sans SC, sans-serif",
+      nameFontFamily: savedOverlay.nameFontFamily || savedOverlay.fontFamily || "Microsoft YaHei, Noto Sans SC, sans-serif",
+      contentFontFamily: savedOverlay.contentFontFamily || savedOverlay.fontFamily || "Microsoft YaHei, Noto Sans SC, sans-serif",
       textColor: savedOverlay.textColor || "#ffffff",
       nameColor: savedOverlay.nameColor || "#fd4c5d",
       bubbleColor: savedOverlay.bubbleColor || "rgba(36, 27, 32, 0.78)",
@@ -232,11 +277,17 @@ function defaultState() {
       animation: savedOverlay.animation || "slide",
       rounded: savedOverlay.rounded || 18,
       gap: savedOverlay.gap || 10,
+      convertChinese: savedOverlay.convertChinese || "none",
     },
     logs: [],
     progress: "",
     eventsBound: false,
     activeTab: "account",
+    ui: {
+      theme: savedUi.theme === "dark" ? "dark" : "light",
+      sidebarCollapsed: Boolean(savedUi.sidebarCollapsed),
+      uiScale: Math.min(1.3, Math.max(0.8, Number(savedUi.uiScale) || 1)),
+    },
     qrLogin: {
       status: "idle",
       imageData: "",
@@ -273,10 +324,27 @@ export const useLiveStore = defineStore("live", {
           enabled: this.obs.enabled,
           url: this.obs.url,
           password: this.obs.password,
+          shouldRestoreConnection: this.obs.shouldRestoreConnection,
           autoStartLive: this.obs.autoStartLive,
           stopStreamingAfterClose: this.obs.stopStreamingAfterClose,
         },
+        ui: this.ui,
       }))
+    },
+    setTheme(theme) {
+      this.ui.theme = theme === "dark" ? "dark" : "light"
+      this.persist()
+    },
+    toggleTheme() {
+      this.setTheme(this.ui.theme === "dark" ? "light" : "dark")
+    },
+    toggleSidebar() {
+      this.ui.sidebarCollapsed = !this.ui.sidebarCollapsed
+      this.persist()
+    },
+    setUiScale(value) {
+      this.ui.uiScale = Math.min(1.3, Math.max(0.8, Number(value) || 1))
+      this.persist()
     },
     log(message) {
       const text = String(message || "")
@@ -298,6 +366,23 @@ export const useLiveStore = defineStore("live", {
         ...this.liveHistory.filter((item) => item.liveId !== record.liveId),
       ].slice(0, 100)
       this.persist()
+    },
+    pushLiveTimelinePoint(force = false) {
+      if (!this.live.isLive && !this.room.isLive && !this.summary.liveId) {
+        return
+      }
+      const now = Date.now()
+      const timeline = Array.isArray(this.summary.timeline) ? this.summary.timeline : []
+      const last = timeline[timeline.length - 1]
+      if (!force && last && now - last.time < 30000) {
+        return
+      }
+      timeline.push({
+        time: now,
+        onlineCount: Number(this.room.onlineCount || 0),
+        danmakuCount: Number(this.summary.danmakuCount || 0),
+      })
+      this.summary.timeline = timeline.slice(-720)
     },
     removeLiveRecord(liveId) {
       this.liveHistory = this.liveHistory.filter((item) => item.liveId !== liveId)
@@ -509,10 +594,12 @@ export const useLiveStore = defineStore("live", {
       }
     },
     handleDanmuMessage(message) {
+      let timelineChanged = false
       if (message.type === BackendDanmuTypes.DISPLAY_INFO && message.data) {
         const onlineCount = parseCount(message.data.watchingCount, message.data.WatchingCount)
         if (onlineCount !== null && Date.now() >= this.room.suppressOnlineCountUntil) {
           this.room.onlineCount = onlineCount
+          timelineChanged = true
         }
         const likeCount = parseCount(message.data.likeCount, message.data.LikeCount)
         if (likeCount !== null) {
@@ -539,12 +626,20 @@ export const useLiveStore = defineStore("live", {
       }
 
       const list = mapBackendDanmuMessage(message)
+      let newDanmakuCount = 0
       list.forEach((item) => {
         if (!this.isDuplicateDanmaku(item)) {
           this.room.danmakuList.unshift(item)
+          newDanmakuCount += 1
         }
       })
       this.room.danmakuList = this.room.danmakuList.slice(0, 300)
+      if (newDanmakuCount) {
+        this.summary.danmakuCount = Number(this.summary.danmakuCount || 0) + newDanmakuCount
+      }
+      if (timelineChanged || newDanmakuCount) {
+        this.pushLiveTimelinePoint()
+      }
     },
     isDuplicateDanmaku(item) {
       const itemTime = Number(item.time || 0)
@@ -802,6 +897,10 @@ export const useLiveStore = defineStore("live", {
       this.live.liveId = data.liveID
       this.room.liveId = data.liveID
       this.room.isLive = true
+      this.summary.liveId = data.liveID
+      this.summary.timeline = []
+      this.summary.danmakuCount = 0
+      this.pushLiveTimelinePoint(true)
       this.persist()
       this.log(`开播成功：${data.liveID}`)
       await this.startDanmu({ restart: true })
@@ -821,6 +920,7 @@ export const useLiveStore = defineStore("live", {
       this.summary.endReason = info.endReason || "author stopped"
       this.summary.endedAt = new Date().toLocaleString()
       this.summary.duration = this.formatDuration(info.duration || 0)
+      this.pushLiveTimelinePoint(true)
       this.persistLiveRecord()
       this.log(`直播已停止：${info.endReason || "author stopped"}`)
       try {
@@ -865,7 +965,11 @@ export const useLiveStore = defineStore("live", {
         obsClient.on("close", () => {
           this.obs.connected = false
           this.obs.streaming = false
+          if (!obsPreserveRestoreOnClose) {
+            this.obs.shouldRestoreConnection = false
+          }
           this.obs.autoStartStatus = "idle"
+          this.persist()
           this.log("OBS WebSocket 连接已关闭")
         }),
         obsClient.on("error", (error) => {
@@ -880,13 +984,14 @@ export const useLiveStore = defineStore("live", {
       await client.connect()
       this.obs.connected = true
       this.obs.enabled = true
+      this.obs.shouldRestoreConnection = true
       this.obs.lastError = ""
       this.obs.url = normalizeObsUrl(this.obs.url)
       this.persist()
       return client
     },
     async restoreObsConnection() {
-      if (!this.obs.enabled) {
+      if (!this.obs.shouldRestoreConnection) {
         return
       }
       try {
@@ -896,10 +1001,17 @@ export const useLiveStore = defineStore("live", {
       } catch (error) {
         this.obs.connected = false
         this.obs.streaming = false
+        this.obs.shouldRestoreConnection = false
         this.obs.autoStartStatus = "idle"
         this.obs.lastError = formatError(error)
+        this.persist()
         this.log(`OBS 自动重连失败：${this.obs.lastError}`)
       }
+    },
+    rememberObsConnectionForNextLaunch() {
+      obsPreserveRestoreOnClose = true
+      this.obs.shouldRestoreConnection = Boolean(this.obs.connected)
+      this.persist()
     },
     handleObsEvent(event) {
       if (event?.eventType !== "StreamStateChanged") {

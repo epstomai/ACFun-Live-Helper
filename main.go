@@ -22,8 +22,8 @@ func main() {
 		Title:            "ACFun Live Helper",
 		Width:            1320,
 		Height:           860,
-		MinWidth:         1100,
-		MinHeight:        720,
+		MinWidth:         360,
+		MinHeight:        640,
 		BackgroundColour: &options.RGBA{R: 248, G: 243, B: 245, A: 255},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
