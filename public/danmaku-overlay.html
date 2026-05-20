@@ -78,6 +78,37 @@
         text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.95);
       }
 
+      /* 系统状态提示弹幕：与普通弹幕同形，附左侧状态色条便于和真实弹幕区分 */
+      .item.status {
+        opacity: 0.92;
+        border-left: 3px solid var(--status-accent, #36b37e);
+      }
+
+      .item.status .name {
+        color: var(--status-accent, #36b37e);
+      }
+
+      .item.status[data-tone="warn"] {
+        --status-accent: #f59e0b;
+      }
+
+      .item.status[data-tone="error"] {
+        --status-accent: #ef4444;
+      }
+
+      .item.status[data-tone="info"] {
+        --status-accent: #38bdf8;
+      }
+
+      .item.status.fading {
+        animation: fade-out 600ms ease forwards;
+      }
+
+      @keyframes fade-out {
+        from { opacity: 0.92; }
+        to { opacity: 0; transform: translateX(20px); }
+      }
+
       .avatar {
         width: calc(var(--font-size) * 2.15);
         height: calc(var(--font-size) * 2.15);
@@ -215,6 +246,7 @@
 
       const PLACEHOLDER_DANMU = { nickname: "AC娘", content: "等待主播开播中…" }
 
+      const STATUS_AUTO_HIDE_MS = 6000
       const RECONNECT_DELAY_MS = 30000
       const HEARTBEAT_INTERVAL_MS = 5000
 
@@ -238,6 +270,7 @@
           animation: "slide",
           rounded: 18,
           gap: 10,
+          scale: 1,
           convertChinese: "none",
           ...decodeBase64Json(params.get("style")),
         },
@@ -247,11 +280,13 @@
         placeholderShown: false,
         heartbeatTimer: null,
         reconnectTimer: null,
+        statusFadeTimer: null,
       }
 
       applyStyle()
       ensureChineseConverter()
       connect()
+      subscribeStyleEvents()
 
       function decodeBase64Json(value) {
         if (!value) {
@@ -265,6 +300,38 @@
           return JSON.parse(new TextDecoder().decode(bytes))
         } catch {
           return {}
+        }
+      }
+
+      // 通过同源 SSE 接收主程序推送的样式更新，实现修改字号 / 字体 / 颜色等实时反映到 OBS 浏览器源。
+      // overlay HTML 由主程序的 overlay HTTP server 提供，所以 /events 与本页面同源。
+      function subscribeStyleEvents() {
+        if (typeof EventSource === "undefined") return
+        try {
+          const url = new URL("/events", window.location.href)
+          const source = new EventSource(url.toString())
+          source.addEventListener("style", (event) => {
+            applyStylePatch(event.data)
+          })
+          source.onerror = () => {
+            // 内置自动重连，不需要主动处理。
+          }
+        } catch (_) {}
+      }
+
+      function applyStylePatch(raw) {
+        let patch
+        try {
+          patch = JSON.parse(raw)
+        } catch (_) {
+          return
+        }
+        if (!patch || typeof patch !== "object") return
+        const previousConvert = state.style.convertChinese
+        Object.assign(state.style, patch)
+        applyStyle()
+        if (state.style.convertChinese !== previousConvert) {
+          ensureChineseConverter()
         }
       }
 
@@ -282,6 +349,9 @@
         document.documentElement.style.setProperty("--bubble-color", state.style.bubbleColor)
         document.documentElement.style.setProperty("--rounded", `${state.style.rounded}px`)
         document.documentElement.style.setProperty("--gap", `${state.style.gap}px`)
+        // 整体缩放：用 CSS zoom 同比放大所有视觉元素，OBS 浏览器源宽高保持不变。
+        const scale = Number(state.style.scale)
+        document.documentElement.style.zoom = Number.isFinite(scale) && scale > 0 ? scale : 1
       }
 
       let chineseConverter = (text) => text
@@ -412,11 +482,14 @@
       function connect() {
         if (!state.liverUID) {
           showPlaceholder()
+          showStatus("未提供主播 UID，请检查浏览器源 URL 中的 liverUID 参数", { tone: "error" })
           return
         }
 
         closeSocket()
         clearReconnect()
+
+        showStatus(`正在连接 ${state.backendUrl} …`, { tone: "info" })
 
         state.socket = new WebSocket(state.backendUrl)
         state.socket.onopen = async () => {
@@ -424,11 +497,18 @@
             if (state.tokenInfo && state.tokenInfo.userID) {
               await request(BackendTypes.SET_TOKEN, state.tokenInfo)
             }
+            showStatus("已连接 acfunlive-backend，订阅弹幕中…", { tone: "info" })
             await request(BackendTypes.GET_DANMU, { liverUID: state.liverUID })
             clearPlaceholder()
+            showStatus(`已连接 · 订阅 UID ${state.liverUID} · 等待弹幕`, { tone: "success", autoHide: true })
             startHeartbeat()
           } catch (error) {
-            showPlaceholder()
+            const message = error && error.message ? error.message : String(error)
+            const isNotLive = /未开播|已关播|380023|129004/.test(message)
+            showStatus(
+              isNotLive ? "已连接 · 主播当前未开播，等待开播中…" : `订阅失败：${message}`,
+              { tone: isNotLive ? "warn" : "error" },
+            )
             scheduleReconnect()
             try { state.socket && state.socket.close() } catch (_) {}
           }
@@ -437,10 +517,12 @@
         state.socket.onclose = () => {
           stopHeartbeat()
           showPlaceholder()
+          showStatus(`弹幕监听已断开，${Math.round(RECONNECT_DELAY_MS / 1000)}s 后重连`, { tone: "warn" })
           scheduleReconnect()
         }
         state.socket.onerror = () => {
           showPlaceholder()
+          showStatus("连接 acfunlive-backend 出错，将自动重试", { tone: "error" })
         }
       }
 
@@ -503,6 +585,46 @@
         feed.querySelectorAll(".placeholder").forEach((node) => node.remove())
       }
 
+      // 渲染或更新状态弹幕。tone: success / info / warn / error。
+      // autoHide=true 表示成功类提示自动 6 秒淡出；持久态（如断开）保持。
+      function showStatus(text, { tone = "success", autoHide = false } = {}) {
+        if (state.statusFadeTimer) {
+          window.clearTimeout(state.statusFadeTimer)
+          state.statusFadeTimer = null
+        }
+        clearStatus()
+        renderDanmu({
+          nickname: "弹幕监听",
+          content: String(text || ""),
+          avatar: "",
+          isGift: false,
+        })
+        const node = feed.lastElementChild
+        if (node) {
+          node.classList.add("status")
+          node.dataset.tone = tone
+        }
+        if (autoHide && node) {
+          state.statusFadeTimer = window.setTimeout(() => {
+            state.statusFadeTimer = null
+            if (node.isConnected) {
+              node.classList.add("fading")
+              window.setTimeout(() => {
+                if (node.isConnected) node.remove()
+              }, 600)
+            }
+          }, STATUS_AUTO_HIDE_MS)
+        }
+      }
+
+      function clearStatus() {
+        if (state.statusFadeTimer) {
+          window.clearTimeout(state.statusFadeTimer)
+          state.statusFadeTimer = null
+        }
+        feed.querySelectorAll(".status").forEach((node) => node.remove())
+      }
+
       function request(type, data) {
         const requestID = `${Date.now()}-${++state.requestSeed}`
         return new Promise((resolve, reject) => {
@@ -536,7 +658,12 @@
         }
 
         if (message.liverUID !== undefined && message.type !== undefined) {
-          mapDanmuMessage(message).forEach(renderDanmu)
+          const items = mapDanmuMessage(message)
+          if (items.length) {
+            clearStatus()
+            clearPlaceholder()
+          }
+          items.forEach(renderDanmu)
         }
       }
 

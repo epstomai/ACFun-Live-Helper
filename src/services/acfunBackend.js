@@ -33,6 +33,8 @@ export const BackendTypes = Object.freeze({
   MANAGER_KICK: 204,
   AUTHOR_KICK: 205,
 
+  GET_MEDAL_RANK_LIST: 302,
+
   CHECK_LIVE_AUTH: 900,
   GET_LIVE_TYPE_LIST: 901,
   GET_PUSH_CONFIG: 902,
@@ -516,6 +518,120 @@ export function normalizeManager(item) {
   }
 }
 
+function pickAvatarUrl(value) {
+  if (!value) return ""
+  if (typeof value === "string") return value
+  if (Array.isArray(value)) {
+    for (const it of value) {
+      const u = pickAvatarUrl(it)
+      if (u) return u
+    }
+    return ""
+  }
+  if (typeof value === "object") {
+    return value.url || value.cdnUrl || value.avatar || value.headUrl || value.userHeadUrl || ""
+  }
+  return ""
+}
+
+// AcFun 守护榜接口（GET_MEDAL_RANK_LIST）返回结构：
+//   { hasFansClub, clubName, medalCount, rankList: [{ profile: {userID, nickname, avatar, ...}, friendshipDegree, level }] }
+export function normalizeGuardian(item, index = 0) {
+  const src = item || {}
+  const user = src.profile || src.userInfo || src.user || src.fansInfo || src.fan || src
+  const avatarRaw =
+    user?.userHeadUrl ||
+    user?.headUrl ||
+    user?.avatar ||
+    user?.headPic ||
+    user?.avatarUrl ||
+    src.userHeadUrl ||
+    src.headUrl ||
+    src.avatar ||
+    src.headPic ||
+    ""
+  return {
+    rank: Number(src.rank ?? src.ranking ?? src.no ?? index + 1) || index + 1,
+    userId: String(
+      user?.userID ||
+      user?.userId ||
+      user?.uid ||
+      user?.id ||
+      src.userID ||
+      src.userId ||
+      src.uid ||
+      src.id ||
+      ""
+    ),
+    nickname:
+      user?.userName ||
+      user?.nickname ||
+      user?.nickName ||
+      user?.name ||
+      src.userName ||
+      src.nickname ||
+      src.nickName ||
+      src.name ||
+      "",
+    avatar: pickAvatarUrl(avatarRaw),
+    medalLevel: Number(
+      src.level ??
+      src.medalLevel ??
+      src.uperBadgeLevel ??
+      src.fansLevel ??
+      src.fanLevel ??
+      user?.level ??
+      0
+    ) || 0,
+    intimacy: Number(
+      src.friendshipDegree ??
+      src.intimacy ??
+      src.fanIntimacy ??
+      src.score ??
+      src.fanScore ??
+      src.value ??
+      0
+    ) || 0,
+    clubName:
+      src.clubName ||
+      src.uperBadgeName ||
+      src.badgeName ||
+      src.medalName ||
+      "",
+  }
+}
+
+export function normalizeGuardianList(payload) {
+  if (!payload) {
+    return { clubName: "", medalCount: 0, rankList: [] }
+  }
+  // 后端可能直接返回 AcFun 原始响应，或嵌套在 data 字段下
+  const root = payload && payload.data && typeof payload.data === "object" ? payload.data : payload
+  const rawList = Array.isArray(root)
+    ? root
+    : root.friendshipDegreeRank ||
+      root.rankList ||
+      root.list ||
+      root.medalRankList ||
+      root.userRankList ||
+      root.fansClubList ||
+      root.data ||
+      root.items ||
+      []
+  const rankList = Array.isArray(rawList)
+    ? rawList.map((item, index) => normalizeGuardian(item, index))
+    : []
+  const clubName =
+    (root && (root.clubName || root.uperBadgeName || root.badgeName || root.medalName)) ||
+    rankList.find((m) => m.clubName)?.clubName ||
+    ""
+  const medalCount = Number(
+    (root && (root.medalCount ?? root.totalCount ?? root.fansTotalCount ?? root.fansCount ?? root.count)) ??
+    rankList.length
+  ) || rankList.length
+  return { clubName, medalCount, rankList }
+}
+
 export const acfunBackend = new AcfunBackendClient()
 
 export default {
@@ -528,4 +644,6 @@ export default {
   mapBackendDanmuMessage,
   normalizeWatchingUser,
   normalizeManager,
+  normalizeGuardian,
+  normalizeGuardianList,
 }

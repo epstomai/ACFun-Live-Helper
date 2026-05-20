@@ -6,8 +6,16 @@ export function AppendLog(arg1) {
   return window['go']['main']['App']['AppendLog'](arg1);
 }
 
+export function BroadcastOverlayStyle(arg1) {
+  return window['go']['main']['App']['BroadcastOverlayStyle'](arg1);
+}
+
 export function CopyText(arg1) {
   return window['go']['main']['App']['CopyText'](arg1);
+}
+
+export function DownloadPlaybackToFile(arg1, arg2) {
+  return window['go']['main']['App']['DownloadPlaybackToFile'](arg1, arg2);
 }
 
 export function GetBackendPort() {
@@ -18,12 +26,36 @@ export function GetLogPath() {
   return window['go']['main']['App']['GetLogPath']();
 }
 
+export function GetNetworkDelay() {
+  return window['go']['main']['App']['GetNetworkDelay']();
+}
+
 export function GetOverlayBaseUrl() {
   return window['go']['main']['App']['GetOverlayBaseUrl']();
 }
 
+export function GetSharedFloatState() {
+  return window['go']['main']['App']['GetSharedFloatState']();
+}
+
+export function GetSharedTheme() {
+  return window['go']['main']['App']['GetSharedTheme']();
+}
+
 export function GetSystemFonts() {
   return window['go']['main']['App']['GetSystemFonts']();
+}
+
+export function GetSystemStats() {
+  return window['go']['main']['App']['GetSystemStats']();
+}
+
+export function IsMiniMode() {
+  return window['go']['main']['App']['IsMiniMode']();
+}
+
+export function LaunchMiniWindow() {
+  return window['go']['main']['App']['LaunchMiniWindow']();
 }
 
 export function OpenCoverFile() {
@@ -44,4 +76,20 @@ export function ReadCoverFile(arg1) {
 
 export function SaveCoverImage(arg1) {
   return window['go']['main']['App']['SaveCoverImage'](arg1);
+}
+
+export function SetAlwaysOnTop(arg1) {
+  return window['go']['main']['App']['SetAlwaysOnTop'](arg1);
+}
+
+export function SetSharedFloatState(arg1) {
+  return window['go']['main']['App']['SetSharedFloatState'](arg1);
+}
+
+export function SetSharedTheme(arg1) {
+  return window['go']['main']['App']['SetSharedTheme'](arg1);
+}
+
+export function SetWindowSize(arg1, arg2) {
+  return window['go']['main']['App']['SetWindowSize'](arg1, arg2);
 }

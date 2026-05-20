@@ -49,3 +49,11 @@ lerna-debug.log*
 .codegraph/*.db
 .codegraph/*.db-shm
 .codegraph/*.db-wal
+
+# Ignore new untracked documents
+*.md
+*.txt
+
+# Backup / build artifacts
+*.bak
+*.syso

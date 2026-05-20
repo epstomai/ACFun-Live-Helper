@@ -78,3 +78,87 @@ export async function openLogFolder() {
   }
   return undefined
 }
+
+export async function getSystemStats() {
+  const app = wailsApp()
+  return app && app.GetSystemStats ? app.GetSystemStats() : { cpu: 0, memory: 0 }
+}
+
+export async function getNetworkDelay() {
+  const app = wailsApp()
+  return app && app.GetNetworkDelay ? app.GetNetworkDelay() : -1
+}
+
+export async function setAlwaysOnTop(enabled) {
+  const app = wailsApp()
+  if (app && app.SetAlwaysOnTop) {
+    return app.SetAlwaysOnTop(enabled)
+  }
+}
+
+export async function setWindowSize(width, height) {
+  const app = wailsApp()
+  if (app && app.SetWindowSize) {
+    return app.SetWindowSize(width, height)
+  }
+}
+
+export async function isMiniMode() {
+  const app = wailsApp()
+  return app && app.IsMiniMode ? app.IsMiniMode() : false
+}
+
+export async function launchMiniWindow() {
+  const app = wailsApp()
+  if (app && app.LaunchMiniWindow) {
+    return app.LaunchMiniWindow()
+  }
+}
+
+export async function setSharedTheme(theme) {
+  const app = wailsApp()
+  if (app && app.SetSharedTheme) {
+    return app.SetSharedTheme(theme)
+  }
+}
+
+export async function getSharedTheme() {
+  const app = wailsApp()
+  return app && app.GetSharedTheme ? app.GetSharedTheme() : ""
+}
+
+export async function setSharedFloatState(payload) {
+  const app = wailsApp()
+  if (app && app.SetSharedFloatState) {
+    return app.SetSharedFloatState(payload)
+  }
+}
+
+export async function getSharedFloatState() {
+  const app = wailsApp()
+  return app && app.GetSharedFloatState ? app.GetSharedFloatState() : ""
+}
+
+export async function broadcastOverlayStyle(payload) {
+  const app = wailsApp()
+  if (app && app.BroadcastOverlayStyle) {
+    return app.BroadcastOverlayStyle(String(payload || ""))
+  }
+  return undefined
+}
+
+// 让用户选择保存路径，并把远程录播文件流式下载到本地。
+// 返回最终保存路径；用户取消保存对话框时返回空串。
+// 浏览器环境（无 wails）下回退到 window.open，由系统浏览器接管下载。
+export async function downloadPlaybackToFile(url, suggestedName) {
+  const app = wailsApp()
+  if (app && app.DownloadPlaybackToFile) {
+    return app.DownloadPlaybackToFile(String(url || ""), String(suggestedName || ""))
+  }
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer")
+  }
+  return ""
+}
+
+

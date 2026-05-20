@@ -1,9 +1,135 @@
 <template>
+  <div 
+    v-if="floatDanmakuActive" 
+    class="float-danmaku-container" 
+    :class="[
+      `theme-${store.ui.theme}`,
+      {
+        'is-dragging-window': isDraggingWindow,
+        'is-fully-transparent': floatOpacity === 0,
+        'is-transparent-readable': store.ui.theme === 'light' && floatOpacity < 60,
+      },
+    ]"
+    :style="{ 
+      backgroundColor: floatOpacity === 0
+        ? 'transparent'
+        : store.ui.theme === 'light' 
+          ? `rgba(255, 250, 250, ${floatOpacity / 100})` 
+          : `rgba(18, 12, 16, ${floatOpacity / 100})` 
+    }"
+  >
+    <div class="float-header-hotspot" style="--wails-draggable: drag;" @mousedown="handleWindowDrag"></div>
+    <!-- 悬浮窗头部操作栏（通过 Wails 官方双重保险拖拽机制） -->
+    <header class="float-header" style="--wails-draggable: drag;" @mousedown="handleWindowDrag">
+      <div class="float-header-left" style="pointer-events: none;">
+        <Sparkles :size="13" class="float-pin-icon" />
+        <span class="float-title">弹幕窗</span>
+        <span class="float-online-badge">
+          <span class="online-dot animated-breath"></span>
+          {{ store.room.onlineCount }} 在线
+        </span>
+      </div>
+      <div class="float-header-right" style="--wails-draggable: no-drag;">
+        <!-- 一键置顶/取消置顶 -->
+        <button 
+          class="float-action-btn" 
+          :class="{ active: isAlwaysOnTop }" 
+          :title="isAlwaysOnTop ? '取消置顶' : '窗口置顶'"
+          @click="toggleFloatAlwaysOnTop"
+        >
+          <Pin :size="13" />
+        </button>
+        <button 
+          class="float-action-btn" 
+          :class="{ active: showFloatOpacityControl }" 
+          :title="showFloatOpacityControl ? '隐藏透明度设置' : '显示透明度设置'"
+          @click="showFloatOpacityControl = !showFloatOpacityControl"
+        >
+          <SlidersHorizontal :size="13" />
+        </button>
+        <!-- 一键折叠/展开回复框 -->
+        <button 
+          class="float-action-btn" 
+          :class="{ active: showFloatReply }" 
+          :title="showFloatReply ? '隐藏回复框' : '显示回复框'"
+          @click="showFloatReply = !showFloatReply"
+        >
+          <MessageSquare :size="13" />
+        </button>
+        <!-- 一键关闭窗口 -->
+        <button class="float-action-btn close-window" title="关闭悬浮窗" @click="exitFloatDanmakuMode">
+          <X :size="13" />
+        </button>
+      </div>
+    </header>
+
+    <!-- 极高辨识度的滚动弹幕区 -->
+    <main class="float-body">
+      <div class="float-feed-list">
+        <div v-for="item in store.room.danmakuList" :key="item.uniqueId" class="float-feed-item" :class="{ self: item.self, gift: item.isGift }">
+          <span class="float-feed-nickname">{{ item.nickname }}</span>
+          <span class="float-feed-content">{{ item.content }}</span>
+          <span v-if="item.isGift" class="float-feed-gift">x{{ item.num }}</span>
+        </div>
+        <div v-if="!store.room.danmakuList.length" class="float-empty-state">
+          等待弹幕中...
+        </div>
+      </div>
+    </main>
+
+    <!-- 底部回复栏 (可一键收起) -->
+    <footer v-if="showFloatReply || showFloatOpacityControl" class="float-footer">
+      <!-- 不透明度科技感滑杆 -->
+      <div v-if="showFloatOpacityControl" class="float-opacity-control">
+        <span class="opacity-label">透明度</span>
+        <input 
+          v-model.number="floatOpacity" 
+          type="range" 
+          min="0" 
+          max="100" 
+          step="1" 
+          class="opacity-slider"
+          :style="{ '--opacity-fill': `${floatOpacity}%` }"
+        />
+        <span class="opacity-value">{{ floatOpacity }}%</span>
+      </div>
+      <div v-if="showFloatReply" class="float-reply-box">
+        <input 
+          v-model="floatCommentText" 
+          type="text" 
+          placeholder="回复弹幕..." 
+          @keyup.enter="sendFloatComment" 
+        />
+        <button class="float-send-btn" @click="sendFloatComment">
+          <Send :size="12" />
+        </button>
+      </div>
+    </footer>
+  </div>
+
   <div
+    v-else
     class="app-shell"
     :class="[`theme-${store.ui.theme}`, { 'sidebar-collapsed': store.ui.sidebarCollapsed }]"
     :style="appShellStyle"
   >
+    <header class="window-titlebar" style="--wails-draggable: drag;" @mousedown="handleWindowDrag">
+      <div class="window-titlebar-brand" style="pointer-events: none;">
+        <Sparkles :size="14" />
+        <span>AcFun Live Helper</span>
+      </div>
+      <div class="window-titlebar-controls" style="--wails-draggable: no-drag;">
+        <button class="window-control-btn" title="最小化" @click="minimiseWindow">
+          <Minus :size="13" />
+        </button>
+        <button class="window-control-btn" title="最大化 / 还原" @click="toggleMaximiseWindow">
+          <Maximize2 :size="12" />
+        </button>
+        <button class="window-control-btn close" title="关闭" @click="quitWindow">
+          <X :size="14" />
+        </button>
+      </div>
+    </header>
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-main">
@@ -41,6 +167,10 @@
       </nav>
 
       <div class="sidebar-footer">
+        <button class="sidebar-float-btn" @click="enterFloatDanmakuMode" title="开启桌面弹幕窗口">
+          <Layers :size="13" />
+          <span>弹幕窗</span>
+        </button>
         <div class="connection-pill" :class="{ online: store.connected }">
           <Server :size="14" />
           <span>{{ store.connected ? "已连接" : "未连接" }}</span>
@@ -63,7 +193,7 @@
           </p>
         </div>
         <div class="topbar-actions">
-          <button class="icon-button" :title="store.ui.theme === 'dark' ? '要有光！' : '狗眼①瞎'" @click="store.toggleTheme">
+          <button class="icon-button" :title="store.ui.theme === 'dark' ? '要有光！' : '狗眼①瞎(つд⊂)'" @click="store.toggleTheme">
             <component :is="themeIcon" :size="17" />
           </button>
           <div v-if="store.isLoggedIn" class="profile-chip" @click="store.activeTab = 'account'">
@@ -92,117 +222,384 @@
 
       <!-- 账号 -->
       <section v-if="store.activeTab === 'account'" class="account-grid">
-        <div class="panel account-panel">
-          <div class="panel-head">
-            <h3>账号</h3>
-            <span class="status-dot" :class="{ online: store.connected }"></span>
+        <div class="account-main-column">
+          <div class="panel account-panel relative-panel">
+            <div class="panel-head">
+              <h3>账号</h3>
+              <span class="status-dot" :class="{ online: store.isLoggedIn }"></span>
+            </div>
+
+            <Transition name="transition-fade-slide" mode="out-in">
+              <!-- 已登录视图 -->
+              <div v-if="store.isLoggedIn" key="logged-in" class="account-inner-view">
+                <div class="account-overview">
+                  <div class="avatar avatar-lg">
+                    <img v-if="store.userProfile.avatar" :src="store.userProfile.avatar" :alt="store.userName" />
+                    <span v-else>{{ userInitial }}</span>
+                  </div>
+                  <div class="account-main">
+                    <strong>{{ store.userName }}</strong>
+                    <span>UID {{ store.userId }}</span>
+                    <p>{{ store.userProfile.signature || store.userProfile.verifiedText || "已成功登录猴山。" }}</p>
+                  </div>
+                  <dl class="mini-stats">
+                    <div><dt>关注</dt><dd>{{ store.userProfile.followingCount || "-" }}</dd></div>
+                    <div><dt>粉丝</dt><dd>{{ store.userProfile.fansCount || "-" }}</dd></div>
+                    <div><dt>获赞</dt><dd>{{ store.userProfile.likeCount || "-" }}</dd></div>
+                  </dl>
+                </div>
+
+                <div class="button-row">
+                  <button class="command danger" @click="store.logout">
+                    <LogOut :size="16" /><span>登出账号</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 未登录视图 -->
+              <div v-else key="logged-out" class="account-inner-view">
+                <div class="account-overview">
+                  <div class="avatar avatar-lg">
+                    <div class="avatar-placeholder-icon">
+                      <User :size="24" />
+                    </div>
+                  </div>
+                  <div class="account-main">
+                    <strong>未登录</strong>
+                    <span>UID -</span>
+                  </div>
+                  <dl class="mini-stats">
+                    <div><dt>关注</dt><dd>-</dd></div>
+                    <div><dt>粉丝</dt><dd>-</dd></div>
+                    <div><dt>获赞</dt><dd>-</dd></div>
+                  </dl>
+                </div>
+
+                <div class="form-grid login-form-stacked">
+                  <label>
+                    <span>账号</span>
+                    <input v-model="loginForm.account" autocomplete="username" />
+                  </label>
+                  <label>
+                    <span>密码</span>
+                    <input v-model="loginForm.password" type="password" autocomplete="current-password" @keyup.enter="doLogin" />
+                  </label>
+                </div>
+
+                <div class="button-row">
+                  <button class="command primary" @click="doLogin">
+                    <User :size="16" /><span>账号登录</span>
+                  </button>
+                  <button class="command" :disabled="qrLoginRunning" @click="startQrLogin">
+                    <QrCode :size="16" /><span>{{ qrLoginRunning ? "等待扫码" : "扫码登录" }}</span>
+                  </button>
+                  <button v-if="store.tokenInfo" class="command" @click="run(() => store.restoreSession(), '会话已恢复')">
+                    <RotateCcw :size="16" /><span>恢复会话</span>
+                  </button>
+                </div>
+
+                <div v-if="store.qrLogin.status !== 'idle'" class="qr-login-card">
+                  <div class="qr-image-shell">
+                    <img v-if="qrImageSrc" :src="qrImageSrc" alt="AcFun 登录二维码" />
+                    <span v-else>等待二维码</span>
+                  </div>
+                  <div>
+                    <strong>{{ qrStatusText }}</strong>
+                    <p v-if="qrExpireText">{{ qrExpireText }}</p>
+                    <p>使用 <span class="acfun-text">AcFun</span> 手机客户端扫码确认登录。</p>
+                  </div>
+                </div>
+              </div>
+            </Transition>
+
+            <!-- 高级模糊 Loading 遮罩层 -->
+            <Transition name="fade">
+              <div v-if="store.progress" class="panel-loading-overlay">
+                <div class="loader-spinner"></div>
+                <div class="loader-text">{{ store.progress }}</div>
+              </div>
+            </Transition>
           </div>
 
-          <div class="account-overview">
-            <div class="avatar avatar-lg">
-              <img v-if="store.userProfile.avatar" :src="store.userProfile.avatar" :alt="store.userName" />
-              <span v-else>{{ userInitial }}</span>
+          <!-- 今日开播成就卡片 -->
+          <div v-if="store.isLoggedIn" class="panel achievements-panel animate-fade-in">
+            <div class="panel-head">
+              <h3>今日开播成就</h3>
+              <span class="achievements-subtitle">Today's Live Stats</span>
             </div>
-            <div class="account-main">
-              <strong>{{ store.userName || "未登录" }}</strong>
-              <span>UID {{ store.userId || "-" }}</span>
-              <p>{{ store.userProfile.signature || store.userProfile.verifiedText || "登录成功后自动进入开播页。" }}</p>
+            
+            <div class="achievements-grid">
+              <div class="achievement-card duration-card">
+                <div class="achievement-icon-wrapper">
+                  <Hourglass :size="20" class="achievement-icon animated-hourglass" />
+                </div>
+                <div class="achievement-info">
+                  <span class="achievement-title">累计时长</span>
+                  <span class="achievement-value font-mono">{{ store.formattedLiveDuration }}</span>
+                </div>
+              </div>
+
+              <div class="achievement-card fans-card">
+                <div class="achievement-icon-wrapper">
+                  <Sparkles :size="20" class="achievement-icon" />
+                </div>
+                <div class="achievement-info">
+                  <span class="achievement-title">新增粉丝</span>
+                  <span class="achievement-value">{{ displayCount(store.room.todayFansAdded) }}</span>
+                </div>
+              </div>
+
+              <div class="achievement-card banana-card">
+                <div class="achievement-icon-wrapper">
+                  <Smile :size="20" class="achievement-icon" />
+                </div>
+                <div class="achievement-info">
+                  <span class="achievement-title">收到香蕉</span>
+                  <span class="achievement-value">{{ displayCount(store.room.bananaCount) }}</span>
+                </div>
+              </div>
+
+              <div class="achievement-card diamond-card">
+                <div class="achievement-icon-wrapper">
+                  <Gem :size="20" class="achievement-icon" />
+                </div>
+                <div class="achievement-info">
+                  <span class="achievement-title">收到钻石</span>
+                  <span class="achievement-value">{{ displayCount(store.room.diamondCount) }}</span>
+                </div>
+              </div>
             </div>
-            <dl class="mini-stats">
-              <div><dt>关注</dt><dd>{{ store.userProfile.followingCount || "-" }}</dd></div>
-              <div><dt>粉丝</dt><dd>{{ store.userProfile.fansCount || "-" }}</dd></div>
-              <div><dt>获赞</dt><dd>{{ store.userProfile.likeCount || "-" }}</dd></div>
+          </div>
+
+          <!-- 守护团列表 -->
+          <div
+            v-if="store.isLoggedIn"
+            class="panel guardian-club-panel animate-fade-in"
+            :class="{ 'is-collapsed': !store.ui.guardianClubVisible }"
+          >
+            <div class="panel-head">
+              <div class="guardian-head-main">
+                <ShieldCheck :size="18" class="guardian-head-icon" />
+                <h3>
+                  守护团<span v-if="store.guardianClub.clubName" class="guardian-club-name"> · {{ store.guardianClub.clubName }}</span>
+                </h3>
+              </div>
+              <div class="guardian-head-meta">
+                <span v-if="store.guardianClub.medalCount" class="guardian-count">共 <strong>{{ store.guardianClub.medalCount.toLocaleString() }}</strong> 人</span>
+                <button
+                  class="icon-button"
+                  title="刷新守护团列表"
+                  :disabled="store.guardianClub.loading || !store.ui.guardianClubVisible"
+                  @click="refreshGuardianList"
+                >
+                  <RefreshCw :size="15" :class="{ 'spin-anim': store.guardianClub.loading }" />
+                </button>
+                <button
+                  class="icon-button"
+                  :title="store.ui.guardianClubVisible ? '隐藏守护团列表' : '显示守护团列表'"
+                  @click="store.toggleGuardianClubVisible()"
+                >
+                  <component :is="store.ui.guardianClubVisible ? Eye : EyeOff" :size="15" />
+                </button>
+              </div>
+            </div>
+
+            <div v-if="store.ui.guardianClubVisible && store.guardianClub.rankList.length" class="guardian-list">
+              <div
+                v-for="g in store.guardianClub.rankList"
+                :key="g.userId || g.rank"
+                class="guardian-row"
+                :class="rankRowClass(g.rank)"
+              >
+                <div class="guardian-rank" :class="rankBadgeClass(g.rank)">
+                  <Crown v-if="g.rank <= 3" :size="13" />
+                  <span v-else>{{ g.rank }}</span>
+                </div>
+                <div class="avatar avatar-sm guardian-avatar">
+                  <img v-if="g.avatar" :src="g.avatar" :alt="g.nickname" />
+                  <span v-else>{{ guardianInitial(g.nickname) }}</span>
+                </div>
+                <div class="guardian-info">
+                  <span class="guardian-name">{{ g.nickname || "匿名用户" }}</span>
+                  <span class="guardian-uid">UID {{ g.userId || "-" }}</span>
+                </div>
+                <div class="medal-wrapper guardian-medal" :class="medalWrapperLevelClass(g.medalLevel)">
+                  <div class="medal">
+                    <div class="medal-level"></div>
+                    <div class="medal-name">{{ store.guardianClub.clubName || g.clubName || "粉丝" }}</div>
+                  </div>
+                </div>
+                <div class="guardian-intimacy">
+                  <Heart :size="11" />
+                  <span>{{ (g.intimacy || 0).toLocaleString() }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-else-if="store.ui.guardianClubVisible" class="guardian-empty">
+              <div class="guardian-empty-icon"><Crown :size="26" /></div>
+              <strong>暂无守护团成员</strong>
+              <p>主播尚未开通守护团，或当前还没有粉丝加入。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="account-side-column">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>后端连接</h3>
+            </div>
+            <label class="block-label">
+              <span>Backend WebSocket</span>
+              <div class="inline-input">
+                <input v-model="store.backendUrl" placeholder="ws://localhost:15368/" @change="store.persist" />
+                <button class="command" :disabled="store.connected" @click="run(() => store.connect(), '连接成功')">
+                  <component :is="store.connected ? CheckCircle : PlugZap" :size="16" />
+                  <span>{{ store.connected ? "已连接" : "连接" }}</span>
+                </button>
+              </div>
+            </label>
+            <dl class="stats-grid">
+              <div><dt>用户</dt><dd>{{ store.userName || "未登录" }}</dd></div>
+              <div><dt>UID</dt><dd>{{ store.userId || "-" }}</dd></div>
+              <div><dt>最近错误</dt><dd>{{ store.lastError || "-" }}</dd></div>
             </dl>
           </div>
 
-          <div v-if="!store.isLoggedIn" class="form-grid">
-            <label>
-              <span>账号</span>
-              <input v-model="loginForm.account" autocomplete="username" />
-            </label>
-            <label>
-              <span>密码</span>
-              <input v-model="loginForm.password" type="password" autocomplete="current-password" @keyup.enter="doLogin" />
-            </label>
-          </div>
-
-          <div class="button-row">
-            <button v-if="!store.isLoggedIn" class="command primary" @click="doLogin">
-              <User :size="16" /><span>账号登录</span>
-            </button>
-            <button v-if="!store.isLoggedIn" class="command" :disabled="qrLoginRunning" @click="startQrLogin">
-              <QrCode :size="16" /><span>{{ qrLoginRunning ? "等待扫码" : "扫码登录" }}</span>
-            </button>
-            <button v-if="store.tokenInfo && !store.isLoggedIn" class="command" @click="run(() => store.restoreSession(), '会话已恢复')">
-              <RotateCcw :size="16" /><span>恢复会话</span>
-            </button>
-            <button v-if="store.isLoggedIn" class="command danger" @click="store.logout">
-              <LogOut :size="16" /><span>登出</span>
-            </button>
-          </div>
-
-          <div v-if="store.qrLogin.status !== 'idle'" class="qr-login-card">
-            <div class="qr-image-shell">
-              <img v-if="qrImageSrc" :src="qrImageSrc" alt="AcFun 登录二维码" />
-              <span v-else>等待二维码</span>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>设置</h3>
             </div>
-            <div>
-              <strong>{{ qrStatusText }}</strong>
-              <p v-if="qrExpireText">{{ qrExpireText }}</p>
-              <p>使用 <span class="acfun-text">AcFun</span> 手机客户端扫码确认登录。</p>
-            </div>
+            <label class="block-label">
+              <span>UI 整体缩放</span>
+              <div class="scale-control">
+                <input
+                  v-model.number="uiScalePercent"
+                  type="range"
+                  min="50"
+                  max="150"
+                  step="5"
+                  @change="applyUiScale"
+                />
+                <input
+                  v-model.number="uiScalePercent"
+                  type="number"
+                  min="50"
+                  max="150"
+                  step="5"
+                  @change="applyUiScale"
+                />
+                <span>%</span>
+                <button class="command" @click="resetUiScale">重置</button>
+              </div>
+            </label>
           </div>
-        </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h3>后端连接</h3>
-            <span>{{ store.connected ? "已连接" : "未连接" }}</span>
-          </div>
-          <label class="block-label">
-            <span>Backend WebSocket</span>
-            <div class="inline-input">
-              <input v-model="store.backendUrl" placeholder="ws://localhost:15368/" @change="store.persist" />
-              <button class="command" @click="run(() => store.connect(), '连接成功')">
-                <PlugZap :size="16" /><span>连接</span>
+          <!-- 开播体检看板 -->
+          <div class="panel diagnostic-card" :class="{ loading: diagnosticLoading }">
+            <div class="panel-head">
+              <h3>⚡ 开播体检</h3>
+              <button 
+                class="icon-button re-diagnostic-btn" 
+                :class="{ 'spin-once': diagnosticLoading }"
+                title="重新体检" 
+                @click="triggerReDiagnostic"
+              >
+                <RefreshCw :size="15" />
               </button>
             </div>
-          </label>
-          <dl class="stats-grid">
-            <div><dt>用户</dt><dd>{{ store.userName || "未登录" }}</dd></div>
-            <div><dt>UID</dt><dd>{{ store.userId || "-" }}</dd></div>
-            <div><dt>最近错误</dt><dd>{{ store.lastError || "-" }}</dd></div>
-          </dl>
-        </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h3>设置</h3>
-            <span>界面</span>
-          </div>
-          <label class="block-label">
-            <span>UI 整体缩放</span>
-            <div class="scale-control">
-              <input
-                v-model.number="uiScalePercent"
-                type="range"
-                min="50"
-                max="150"
-                step="5"
-                @change="applyUiScale"
-              />
-              <input
-                v-model.number="uiScalePercent"
-                type="number"
-                min="50"
-                max="150"
-                step="5"
-                @change="applyUiScale"
-              />
-              <span>%</span>
-              <button class="command" @click="resetUiScale">重置</button>
+            <div class="diagnostic-list">
+              <!-- 网络延时 -->
+              <div class="diagnostic-item">
+                <div class="diagnostic-item-left">
+                  <div class="diagnostic-icon-wrapper network">
+                    <Wifi :size="16" />
+                  </div>
+                  <div class="diagnostic-info">
+                    <span class="diagnostic-label">网络延时</span>
+                    <span class="diagnostic-value font-mono">{{ networkLatency === -1 ? '连接失败' : `${networkLatency}ms` }}</span>
+                  </div>
+                </div>
+                <div class="diagnostic-item-right">
+                  <span class="diagnostic-status" :class="networkStatus.status">
+                    <span class="diagnostic-status-dot animated-breath"></span>
+                    {{ networkStatus.text }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- OBS 联动 -->
+              <div class="diagnostic-item">
+                <div class="diagnostic-item-left">
+                  <div class="diagnostic-icon-wrapper obs">
+                    <Video :size="16" />
+                  </div>
+                  <div class="diagnostic-info">
+                    <span class="diagnostic-label">OBS 联动</span>
+                    <span class="diagnostic-value">{{ store.obs.enabled ? (store.obs.connected ? '已联动' : '未连接') : '未启用' }}</span>
+                  </div>
+                </div>
+                <div class="diagnostic-item-right">
+                  <span class="diagnostic-status" :class="obsStatus.status">
+                    <span class="diagnostic-status-dot animated-breath"></span>
+                    {{ obsStatus.text }}
+                  </span>
+                  <button 
+                    v-if="!store.obs.enabled" 
+                    class="quick-fix-btn" 
+                    @click="store.activeTab = 'live'"
+                  >
+                    去开启
+                  </button>
+                  <button 
+                    v-else-if="!store.obs.connected" 
+                    class="quick-fix-btn" 
+                    @click="store.activeTab = 'live'"
+                  >
+                    去连接
+                  </button>
+                </div>
+              </div>
+
+              <!-- 系统资源 -->
+              <div class="diagnostic-item">
+                <div class="diagnostic-item-left">
+                  <div class="diagnostic-icon-wrapper resources">
+                    <Activity :size="16" />
+                  </div>
+                  <div class="diagnostic-info">
+                    <span class="diagnostic-label">系统资源</span>
+                    <span class="diagnostic-value">CPU / 内存</span>
+                  </div>
+                </div>
+                <div class="diagnostic-item-right">
+                  <span class="diagnostic-status" :class="resourcesStatus.status">
+                    <span class="diagnostic-status-dot animated-breath"></span>
+                    {{ resourcesStatus.text }}
+                  </span>
+                </div>
+              </div>
             </div>
-          </label>
+
+            <div class="diagnostic-summary">
+              <span v-if="networkStatus.status === 'success' && resourcesStatus.status === 'success' && (obsStatus.status === 'success' || obsStatus.status === 'info' || obsStatus.status === 'warning')" class="success-tip text-green">
+                <CheckCircle :size="14" /> 状态极佳，准备妥当！开播吧！
+              </span>
+              <span v-else-if="networkStatus.status === 'danger' || resourcesStatus.status === 'danger' || obsStatus.status === 'danger'" class="warning-tip text-red">
+                <XCircle :size="14" /> 检测到部分项异常，可能会影响开播。
+              </span>
+              <span v-else-if="resourcesStatus.status === 'warning'" class="warning-tip text-orange">
+                <AlertTriangle :size="14" /> 系统资源占用偏高，建议关闭高占用程序或降低推流参数。
+              </span>
+              <span v-else-if="networkStatus.status === 'warning'" class="warning-tip text-orange">
+                <AlertTriangle :size="14" /> 网络延时一般，建议检查网络状态。
+              </span>
+              <span v-else class="warning-tip text-orange">
+                <AlertTriangle :size="14" /> 有警告项，请根据上方状态调整后再开播。
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -262,6 +659,36 @@
             </label>
           </div>
 
+          <!-- 直播录像剪辑：直播中显示一行
+               - checkbox 对应 SET_LIVE_CUT_STATUS（是否允许观众剪辑本次录像）
+               - 右侧按钮对应 GET_LIVE_CUT_INFO 返回的 url / redirectURL，仅在拿到时可点击 -->
+          <div v-if="store.live.isLive" class="live-cut-row">
+            <span class="live-cut-label">本场录像</span>
+            <label class="checkbox-label live-cut-toggle">
+              <input
+                type="checkbox"
+                :checked="store.live.liveCutInfo.status"
+                :disabled="liveCutBusy"
+                @change="onToggleLiveCut"
+              />
+              <span>允许观众剪辑</span>
+            </label>
+            <button
+              class="text-button"
+              :disabled="!store.live.liveCutInfo.redirectURL && !store.live.liveCutInfo.url"
+              @click="openLiveCut"
+            >
+              <Scissors :size="14" /><span>打开剪辑页</span>
+            </button>
+            <button
+              class="text-button"
+              :disabled="!store.live.liveCutInfo.url"
+              @click="copy(store.live.liveCutInfo.url)"
+            >
+              <Clipboard :size="14" /><span>复制原始链接</span>
+            </button>
+          </div>
+
           <div class="button-row">
             <button
               v-if="!isLiveActive"
@@ -302,7 +729,6 @@
             @click="openCoverEditor"
           >
             <img v-if="coverPreviewSrc" :src="coverPreviewSrc" :style="cropTransformStyle(store.live.coverFile)" alt="当前封面" />
-            <span v-else>无封面</span>
             <span class="cover-large-preview-hint"><Images :size="16" />点击编辑封面</span>
             <small v-if="isGifCover" class="cover-row-badge">GIF</small>
           </button>
@@ -341,6 +767,9 @@
             <button class="command" @click="run(() => store.testObsConnection(), 'OBS 已连接，推流码已同步')">
               <PlugZap :size="16" /><span>{{ store.obs.connected ? '检查' : '连接' }}</span>
             </button>
+            <button v-if="store.obs.connected" class="command" @click="run(() => store.disconnectObs(), 'OBS 已断开')">
+              <Unplug :size="16" /><span>断开</span>
+            </button>
             <button class="command" :disabled="!store.obs.connected" @click="run(() => store.pushObsStreamSettings(), '已同步推流码')">
               <KeyRound :size="16" /><span>同步推流码</span>
             </button>
@@ -375,18 +804,23 @@
           </div>
           <div class="metrics room-engagement">
             <div><strong>{{ displayCount(store.room.likeCount) }}</strong><span>点赞</span></div>
+            <div><strong>{{ displayCount(store.room.diamondCount) }}</strong><span>钻石</span></div>
             <div><strong>{{ displayCount(store.room.bananaCount) }}</strong><span>香蕉</span></div>
           </div>
           <div class="danmaku-compose">
-            <input ref="commentInputRef" v-model="commentText" placeholder="发送弹幕" @keyup.enter="sendComment" />
-            <select class="a-island-emote-select" value="" title="插入颜文字" @change="insertAIslandEmote($event.target.value, $event.target)">
-              <option value="" disabled>( ﾟ∀。)</option>
-              <option v-for="(item, index) in aIslandEmotes" :key="`${index}-${item}`" :value="item">{{ item }}</option>
-            </select>
-            <button class="command primary" @click="sendComment"><Send :size="16" /><span>发送</span></button>
-            <button class="command" @click="run(() => store.loadRoom())"><RefreshCw :size="16" /><span>刷新</span></button>
-            <button class="command" @click="run(() => store.startDanmu({ restart: true }))"><Radio :size="16" /><span>重连</span></button>
-            <button class="command" @click="store.room.danmakuList = []"><Trash2 :size="16" /><span>清空</span></button>
+            <div class="danmaku-input-row">
+              <input ref="commentInputRef" v-model="commentText" placeholder="发送弹幕" @keyup.enter="sendComment" />
+              <select class="a-island-emote-select" value="" title="插入颜文字" @change="insertAIslandEmote($event.target.value, $event.target)">
+                <option value="" disabled>( ﾟ∀。)</option>
+                <option v-for="(item, index) in aIslandEmotes" :key="`${index}-${item}`" :value="item">{{ item }}</option>
+              </select>
+              <button class="command primary" @click="sendComment"><Send :size="16" /><span>发送</span></button>
+            </div>
+            <div class="danmaku-actions-row">
+              <button class="command" @click="run(() => store.loadRoom())"><RefreshCw :size="16" /><span>刷新</span></button>
+              <button class="command" @click="run(() => store.startDanmu({ restart: true }))"><Radio :size="16" /><span>重连</span></button>
+              <button class="command" @click="store.room.danmakuList = []"><Trash2 :size="16" /><span>清空</span></button>
+            </div>
           </div>
         </div>
 
@@ -451,8 +885,23 @@
         <div class="panel table-panel">
           <div class="panel-head">
             <h3>房管 ({{ store.room.managerList.length }})</h3>
-            <button class="text-button" @click="run(() => store.loadManagerList())">刷新</button>
+            <div class="row-actions">
+              <button class="text-button" @click="run(() => store.loadManagerList())">刷新</button>
+              <button class="text-button" @click="showAddManagerInput = !showAddManagerInput">
+                <ShieldPlus :size="14" style="margin-right: 2px; vertical-align: middle;" />添加
+              </button>
+            </div>
           </div>
+          <Transition name="fade-slide">
+            <div v-if="showAddManagerInput" class="inline-add-manager" style="padding: 10px 12px; border-bottom: 1px solid var(--border-color); background: var(--bg-hover);">
+              <div class="inline-input">
+                <input v-model="addManagerUid" type="text" placeholder="输入房管 UID" @keyup.enter="doAddManagerByUid" style="height: 32px; font-size: 13px;" />
+                <button class="command primary" :disabled="!addManagerUid" @click="doAddManagerByUid" style="height: 32px; padding: 0 12px; font-size: 13px;">
+                  <ShieldPlus :size="14" /><span>添加</span>
+                </button>
+              </div>
+            </div>
+          </Transition>
           <div class="compact-list">
             <article v-for="item in store.room.managerList" :key="item.userId" class="compact-item">
               <div class="compact-user">
@@ -485,63 +934,104 @@
               <button class="icon-button" title="复制" @click="copy(danmakuOverlayUrl)"><Clipboard :size="16" /></button>
             </div>
           </label>
-          <div class="overlay-control-grid">
-            <label><span>宽度</span><input v-model.number="store.overlay.width" type="number" min="240" max="1920" @change="store.persist" /></label>
-            <label><span>高度</span><input v-model.number="store.overlay.height" type="number" min="240" max="1080" @change="store.persist" /></label>
-            <label><span>显示数</span><input v-model.number="store.overlay.maxItems" type="number" min="4" max="80" @change="store.persist" /></label>
-            <label><span>字号</span><input v-model.number="store.overlay.fontSize" type="number" min="12" max="48" @change="store.persist" /></label>
-            <label><span>圆角</span><input v-model.number="store.overlay.rounded" type="number" min="0" max="40" @change="store.persist" /></label>
-            <label><span>间距</span><input v-model.number="store.overlay.gap" type="number" min="0" max="32" @change="store.persist" /></label>
-            <label><span>动画</span>
-              <select v-model="store.overlay.animation" @change="store.persist">
-                <option value="slide">滑入</option>
-                <option value="float">上浮</option>
-                <option value="pop">弹出</option>
-                <option value="fade">淡入</option>
-              </select>
-            </label>
-            <label><span>简繁转换</span>
-              <select v-model="store.overlay.convertChinese" @change="store.persist">
-                <option value="none">不转换</option>
-                <option value="s2t">转繁体</option>
-                <option value="t2s">转简体</option>
-              </select>
-            </label>
+          <div class="overlay-section-row">
+            <section class="overlay-section">
+              <h4 class="overlay-section-title">画布</h4>
+              <div class="overlay-control-grid">
+                <label><span>宽度</span><input v-model.number="store.overlay.width" type="number" min="240" max="1920" @change="store.persist" /></label>
+                <label><span>高度</span><input v-model.number="store.overlay.height" type="number" min="240" max="1080" @change="store.persist" /></label>
+                <label><span>显示数</span><input v-model.number="store.overlay.maxItems" type="number" min="4" max="80" @change="store.persist" /></label>
+                <label><span>整体缩放 %</span>
+                  <input
+                    type="number"
+                    min="50"
+                    max="200"
+                    step="5"
+                    :value="Math.round(store.overlay.scale * 100)"
+                    @change="onOverlayScaleChange"
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section class="overlay-section">
+              <h4 class="overlay-section-title">气泡</h4>
+              <div class="overlay-control-grid">
+                <label><span>字号</span><input v-model.number="store.overlay.fontSize" type="number" min="12" max="48" @change="store.persist" /></label>
+                <label><span>圆角</span><input v-model.number="store.overlay.rounded" type="number" min="0" max="40" @change="store.persist" /></label>
+                <label><span>间距</span><input v-model.number="store.overlay.gap" type="number" min="0" max="32" @change="store.persist" /></label>
+                <label><span>动画</span>
+                  <select v-model="store.overlay.animation" @change="store.persist">
+                    <option value="slide">滑入</option>
+                    <option value="float">上浮</option>
+                    <option value="pop">弹出</option>
+                    <option value="fade">淡入</option>
+                  </select>
+                </label>
+              </div>
+              <div class="overlay-control-grid">
+                <div class="toggle-row full">
+                  <label class="checkbox-label">
+                    <input v-model="store.overlay.bubbleEnabled" type="checkbox" @change="store.persist" />
+                    <span>气泡背景</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input v-model="store.overlay.showAvatar" type="checkbox" @change="store.persist" />
+                    <span>显示头像</span>
+                  </label>
+                </div>
+              </div>
+            </section>
           </div>
-          <div class="overlay-control-grid cols-2">
-            <label><span>用户名字体</span>
-              <select v-model="store.overlay.nameFontFamily" @change="store.persist">
-                <option v-for="font in systemFonts" :key="font" :value="font">{{ font }}</option>
-              </select>
-            </label>
-            <label><span>内容字体</span>
-              <select v-model="store.overlay.contentFontFamily" @change="store.persist">
-                <option v-for="font in systemFonts" :key="font" :value="font">{{ font }}</option>
-              </select>
-            </label>
-          </div>
-          <div class="overlay-control-grid cols-3">
-            <label><span>文字色</span>
-              <HsvColorPicker v-model="store.overlay.textColor" @update:modelValue="store.persist" />
-            </label>
-            <label><span>昵称色</span>
-              <HsvColorPicker v-model="store.overlay.nameColor" @update:modelValue="store.persist" />
-            </label>
-            <label><span>气泡色</span>
-              <HsvColorPicker v-model="store.overlay.bubbleColor" alpha @update:modelValue="store.persist" />
-            </label>
-          </div>
-          <div class="overlay-control-grid">
-            <div class="toggle-row full">
-              <label class="checkbox-label">
-                <input v-model="store.overlay.bubbleEnabled" type="checkbox" @change="store.persist" />
-                <span>气泡背景</span>
-              </label>
-              <label class="checkbox-label">
-                <input v-model="store.overlay.showAvatar" type="checkbox" @change="store.persist" />
-                <span>显示头像</span>
-              </label>
-            </div>
+
+          <div class="overlay-section-row">
+            <section class="overlay-section">
+              <h4 class="overlay-section-title">文本</h4>
+              <div class="overlay-control-grid cols-2">
+                <label><span>用户名字体</span>
+                  <SearchableSelect
+                    v-model="store.overlay.nameFontFamily"
+                    :options="systemFonts"
+                    placeholder="选择字体"
+                    search-placeholder="搜索字体"
+                    @change="store.persist"
+                  />
+                </label>
+                <label><span>内容字体</span>
+                  <SearchableSelect
+                    v-model="store.overlay.contentFontFamily"
+                    :options="systemFonts"
+                    placeholder="选择字体"
+                    search-placeholder="搜索字体"
+                    @change="store.persist"
+                  />
+                </label>
+              </div>
+              <div class="overlay-control-grid">
+                <label><span>简繁转换</span>
+                  <select v-model="store.overlay.convertChinese" @change="store.persist">
+                    <option value="none">不转换</option>
+                    <option value="s2t">转繁体</option>
+                    <option value="t2s">转简体</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section class="overlay-section">
+              <h4 class="overlay-section-title">颜色</h4>
+              <div class="overlay-control-grid cols-3">
+                <label><span>文字色</span>
+                  <HsvColorPicker v-model="store.overlay.textColor" alpha @update:modelValue="store.persist" />
+                </label>
+                <label><span>昵称色</span>
+                  <HsvColorPicker v-model="store.overlay.nameColor" alpha @update:modelValue="store.persist" />
+                </label>
+                <label><span>气泡色</span>
+                  <HsvColorPicker v-model="store.overlay.bubbleColor" alpha @update:modelValue="store.persist" />
+                </label>
+              </div>
+            </section>
           </div>
           <div class="overlay-preview" :style="overlayPreviewStyle">
             <article
@@ -568,9 +1058,11 @@
         <div class="panel">
           <div class="panel-head">
             <h3>本场直播</h3>
-            <span>{{ store.summary.liveId ? "已生成" : "关播后显示" }}</span>
+            <span>{{ store.summary.endedAt ? "已生成" : "关播后显示" }}</span>
           </div>
-          <dl v-if="store.summary.liveId" class="summary-list">
+          <!-- 显示条件用 endedAt：startLive 阶段就有 summary.liveId，但只有关播后才会有 endedAt，
+               避免在直播中显示一份只有 LiveID + 00:00:00 的"伪总结"。 -->
+          <dl v-if="store.summary.endedAt" class="summary-list">
             <div><dt>LiveID</dt><dd>{{ store.summary.liveId }}</dd></div>
             <div><dt>时长</dt><dd>{{ store.summary.duration }}</dd></div>
             <div><dt>结束</dt><dd>{{ store.summary.endedAt || "-" }}</dd></div>
@@ -628,6 +1120,22 @@
               <div class="history-actions">
                 <button class="small-icon" title="查看曲线" @click="openHistoryChart(item)">
                   <LineChart :size="14" />
+                </button>
+                <button
+                  class="small-icon"
+                  :title="item.playback?.url || item.playback?.backupURL ? '打开回放' : '查询并打开回放'"
+                  :disabled="playbackBusy[item.liveId]"
+                  @click="openPlayback(item)"
+                >
+                  <PlayCircle :size="14" />
+                </button>
+                <button
+                  class="small-icon"
+                  :title="downloadBusy[item.liveId] ? '正在下载…' : '下载本场录播'"
+                  :disabled="downloadBusy[item.liveId] || playbackBusy[item.liveId]"
+                  @click="downloadPlayback(item)"
+                >
+                  <Download :size="14" />
                 </button>
                 <button class="small-icon danger" title="删除记录" @click="store.removeLiveRecord(item.liveId)">
                   <Trash2 :size="14" />
@@ -739,7 +1247,7 @@
                     type="button"
                     class="cover-history-remove"
                     title="从历史中移除"
-                    @click.stop="store.removeCoverHistory(item)"
+                    @click.stop="removeCoverHistory(item)"
                   >
                     <X :size="12" />
                   </button>
@@ -770,19 +1278,39 @@
               @mousemove="updateHistoryChartHover"
               @mouseleave="historyChartHover = null"
             >
+              <defs>
+                <!-- 观众数渐变面积填充 -->
+                <linearGradient id="onlineAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.22" />
+                  <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.00" />
+                </linearGradient>
+                <!-- 弹幕数渐变面积填充 -->
+                <linearGradient id="danmakuAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="var(--success)" stop-opacity="0.22" />
+                  <stop offset="100%" stop-color="var(--success)" stop-opacity="0.00" />
+                </linearGradient>
+              </defs>
+
               <g class="history-chart-grid">
                 <line v-for="y in historyChartGridY" :key="y" x1="40" :y1="y" x2="700" :y2="y" />
               </g>
-              <polyline class="history-chart-line online" :points="historyChartSeries.onlinePoints" />
-              <polyline class="history-chart-line danmaku" :points="historyChartSeries.danmakuPoints" />
+
+              <!-- 渐变底面填充 -->
+              <path class="history-chart-area online" :d="historyChartSeries.onlineArea" fill="url(#onlineAreaGrad)" />
+              <path class="history-chart-area danmaku" :d="historyChartSeries.danmakuArea" fill="url(#danmakuAreaGrad)" />
+
+              <!-- 贝塞尔三次平滑曲线 -->
+              <path class="history-chart-path online" :d="historyChartSeries.onlinePath" />
+              <path class="history-chart-path danmaku" :d="historyChartSeries.danmakuPath" />
+
               <g class="history-chart-axis">
                 <line x1="40" y1="220" x2="700" y2="220" />
                 <line x1="40" y1="24" x2="40" y2="220" />
               </g>
               <g v-if="historyChartHover" class="history-chart-hover">
                 <line :x1="historyChartHover.x" y1="24" :x2="historyChartHover.x" y2="220" />
-                <circle :cx="historyChartHover.x" :cy="historyChartHover.onlineY" r="4" class="online" />
-                <circle :cx="historyChartHover.x" :cy="historyChartHover.danmakuY" r="4" class="danmaku" />
+                <circle :cx="historyChartHover.x" :cy="historyChartHover.onlineY" r="5" class="online" />
+                <circle :cx="historyChartHover.x" :cy="historyChartHover.danmakuY" r="5" class="danmaku" />
                 <foreignObject :x="historyChartHover.tooltipX" :y="historyChartHover.tooltipY" width="168" height="76">
                   <div class="history-chart-tooltip">
                     <strong>{{ historyChartHover.timeText }}</strong>
@@ -793,8 +1321,8 @@
               </g>
             </svg>
             <div class="history-chart-legend">
-              <span><i class="online"></i>观众数</span>
-              <span><i class="danmaku"></i>{{ historyDanmakuChartText }}{{ historyDanmakuChartUnit }}</span>
+              <span class="online"><i class="online"></i>观众数</span>
+              <span class="danmaku"><i class="danmaku"></i>{{ historyDanmakuChartText }}{{ historyDanmakuChartUnit }}</span>
               <span>采样点 {{ historyChartSeries.points.length }}</span>
               <button class="history-chart-toggle" @click="toggleHistoryDanmakuChartMode">
                 切换为{{ historyDanmakuChartMode === "delta" ? "累计弹幕数" : "弹幕增量" }}
@@ -815,6 +1343,7 @@ import {
   Ban,
   ChartBar,
   Clipboard,
+  Download,
   Eye,
   EyeOff,
   ExternalLink,
@@ -825,12 +1354,16 @@ import {
   LineChart,
   ListTree,
   LogOut,
+  Maximize2,
+  Minus,
   Moon,
   MonitorPlay,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  PlayCircle,
   PlugZap,
+  Unplug,
   QrCode,
   Radio,
   RefreshCw,
@@ -850,23 +1383,332 @@ import {
   UserX,
   Video,
   X,
+  Hourglass,
+  Sparkles,
+  Smile,
+  Gem,
+  Crown,
+  ShieldCheck,
+  Wifi,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Pin,
+  Layers,
+  MessageSquare,
+  SlidersHorizontal,
 } from "@lucide/vue"
 import { useLiveStore } from "@/stores/liveStore"
 import HsvColorPicker from "@/components/HsvColorPicker.vue"
+import SearchableSelect from "@/components/SearchableSelect.vue"
+import { previewPool, aIslandEmotes } from "@/assets/previewData.js"
 import {
   copyText,
   getBackendPort,
   getLogPath,
   getOverlayBaseUrl,
+  broadcastOverlayStyle,
+  downloadPlaybackToFile,
   getSystemFonts,
   openCoverFile,
   openExternalURL,
   openLogFolder,
   readCoverFile,
   saveCoverImage,
+  getSystemStats,
+  getNetworkDelay,
+  setAlwaysOnTop,
+  setWindowSize,
+  isMiniMode,
+  launchMiniWindow,
+  setSharedTheme,
+  getSharedTheme,
+  setSharedFloatState,
+  getSharedFloatState,
 } from "@/services/nativeBridge"
 
 const store = useLiveStore()
+
+// === 悬浮置顶弹幕窗状态与操作 ===
+const FLOAT_OPACITY_STORAGE_KEY = "aclivehelper.floatDanmaku.opacity"
+const floatDanmakuActive = ref(false)
+const showFloatReply = ref(true)
+const showFloatOpacityControl = ref(true)
+const floatCommentText = ref("")
+const savedFloatOpacity = Number(localStorage.getItem(FLOAT_OPACITY_STORAGE_KEY))
+const floatOpacity = ref(Number.isFinite(savedFloatOpacity) ? Math.min(100, Math.max(0, savedFloatOpacity)) : 72)
+const isAlwaysOnTop = ref(true)
+const isMiniWindowProcess = ref(false)
+const isDraggingWindow = ref(false)
+const floatDanmuStarted = ref(false)
+
+watch(floatOpacity, (value) => {
+  const opacity = Number.isFinite(Number(value)) ? Math.min(100, Math.max(0, Number(value))) : 72
+  if (opacity !== value) {
+    floatOpacity.value = opacity
+    return
+  }
+  localStorage.setItem(FLOAT_OPACITY_STORAGE_KEY, String(opacity))
+}, { immediate: true })
+
+async function toggleFloatAlwaysOnTop() {
+  try {
+    const nextState = !isAlwaysOnTop.value
+    await setAlwaysOnTop(nextState)
+    isAlwaysOnTop.value = nextState
+    showToast(nextState ? "窗口已置顶" : "已取消置顶")
+  } catch (err) {
+    console.error("切换置顶失败:", err)
+  }
+}
+
+watch(floatDanmakuActive, (val) => {
+  if (val) {
+    document.documentElement.classList.add("is-float-window")
+  } else {
+    document.documentElement.classList.remove("is-float-window")
+  }
+}, { immediate: true })
+
+async function enterFloatDanmakuMode() {
+  try {
+    await launchMiniWindow()
+    showToast("已拉起独立的置顶悬浮弹幕窗！")
+  } catch (err) {
+    console.error("启动悬浮窗口进程失败:", err)
+    showToast("拉起悬浮窗失败")
+  }
+}
+
+async function exitFloatDanmakuMode() {
+  try {
+    const mini = await isMiniMode()
+    if (mini) {
+      window.runtime.Quit()
+    } else {
+      floatDanmakuActive.value = false
+      await setAlwaysOnTop(false)
+      await setWindowSize(1024, 720)
+    }
+  } catch (err) {
+    console.error("退出悬浮窗失败:", err)
+  }
+}
+
+async function sendFloatComment() {
+  const comment = floatCommentText.value.trim()
+  if (!comment) return
+  await syncFloatRuntimeState()
+  await run(async () => {
+    await store.ensureBackendToken()
+    await store.sendComment(comment)
+    floatCommentText.value = ""
+  }, "弹幕已发送")
+}
+
+function buildFloatRuntimeState() {
+  return {
+    backendUrl: store.backendUrl,
+    tokenInfo: store.tokenInfo,
+    userId: store.userId,
+    userName: store.userName,
+    userProfile: store.userProfile,
+    liveId: store.room.liveId || store.live.liveId,
+    roomIsLive: store.room.isLive,
+    liveIsLive: store.live.isLive,
+    onlineCount: store.room.onlineCount,
+    danmakuList: store.room.danmakuList.slice(0, 300),
+    updatedAt: Date.now(),
+  }
+}
+
+function applyFloatRuntimeState(state) {
+  if (!state || typeof state !== "object") {
+    return
+  }
+  if (state.backendUrl) {
+    store.backendUrl = state.backendUrl
+  }
+  if (state.tokenInfo) {
+    store.tokenInfo = state.tokenInfo
+  }
+  if (state.userId) {
+    store.userId = String(state.userId)
+  }
+  if (state.userName) {
+    store.userName = state.userName
+  }
+  if (state.userProfile && typeof state.userProfile === "object") {
+    store.userProfile = state.userProfile
+  }
+  if (state.liveId) {
+    store.room.liveId = state.liveId
+    store.live.liveId = state.liveId
+  }
+  store.room.isLive = Boolean(state.roomIsLive || state.liveIsLive || state.liveId)
+  store.live.isLive = Boolean(state.liveIsLive || state.roomIsLive || state.liveId)
+  if (Number.isFinite(Number(state.onlineCount))) {
+    store.room.onlineCount = Number(state.onlineCount)
+  }
+  if (Array.isArray(state.danmakuList)) {
+    store.room.danmakuList = state.danmakuList
+  }
+}
+
+async function publishFloatRuntimeState() {
+  if (isMiniWindowProcess.value) {
+    return
+  }
+  try {
+    await setSharedFloatState(JSON.stringify(buildFloatRuntimeState()))
+  } catch {
+  }
+}
+
+async function syncFloatRuntimeState() {
+  if (!isMiniWindowProcess.value) {
+    return
+  }
+  try {
+    const payload = await getSharedFloatState()
+    if (!payload) {
+      return
+    }
+    applyFloatRuntimeState(JSON.parse(payload))
+    await ensureFloatDanmuStarted()
+  } catch {
+  }
+}
+
+async function ensureFloatDanmuStarted() {
+  if (!isMiniWindowProcess.value || floatDanmuStarted.value || !store.userId || !store.tokenInfo) {
+    return
+  }
+  try {
+    await store.ensureBackendToken()
+    await store.startDanmu()
+    floatDanmuStarted.value = true
+  } catch (error) {
+    console.error("悬浮窗弹幕监听启动失败:", error)
+  }
+}
+
+function handleWindowDrag(event) {
+  if (event.target.closest('button') || event.target.closest('.float-header-right')) return
+  if (window.runtime && window.runtime.WindowDrag) {
+    isDraggingWindow.value = true
+    const stopDragging = () => {
+      window.setTimeout(() => {
+        isDraggingWindow.value = false
+      }, 220)
+      window.removeEventListener("mouseup", stopDragging)
+    }
+    window.addEventListener("mouseup", stopDragging, { once: true })
+    window.runtime.WindowDrag()
+  }
+}
+
+function minimiseWindow() {
+  if (window.runtime && window.runtime.WindowMinimise) {
+    window.runtime.WindowMinimise()
+  }
+}
+
+function toggleMaximiseWindow() {
+  if (window.runtime && window.runtime.WindowToggleMaximise) {
+    window.runtime.WindowToggleMaximise()
+  }
+}
+
+function quitWindow() {
+  if (window.runtime && window.runtime.Quit) {
+    window.runtime.Quit()
+  }
+}
+
+// === 开播体检响应式状态 ===
+const diagnosticLoading = ref(false)
+const diagnosticRunCount = ref(0)
+const systemCpu = ref(0)
+const systemMemory = ref(0)
+const networkLatency = ref(-1)
+
+// 计算延迟评级
+const networkStatus = computed(() => {
+  if (networkLatency.value === -1) {
+    return { status: "danger", text: "测试失败" }
+  }
+  if (networkLatency.value < 50) {
+    return { status: "success", text: `${networkLatency.value}ms (极佳)` }
+  }
+  if (networkLatency.value < 120) {
+    return { status: "warning", text: `${networkLatency.value}ms (一般)` }
+  }
+  return { status: "danger", text: `${networkLatency.value}ms (卡顿)` }
+})
+
+// 计算系统资源评级
+const resourcesStatus = computed(() => {
+  const cpu = systemCpu.value
+  const mem = systemMemory.value
+  if (cpu >= 90 || mem >= 90) {
+    return { status: "danger", text: `极高风险 (CPU ${Math.round(cpu)}% · 内存 ${Math.round(mem)}%)` }
+  }
+  if (cpu >= 70 || mem >= 80) {
+    return { status: "warning", text: `偏高 (CPU ${Math.round(cpu)}% · 内存 ${Math.round(mem)}%)` }
+  }
+  return { status: "success", text: `充足 (CPU ${Math.round(cpu)}% · 内存 ${Math.round(mem)}%)` }
+})
+
+// 计算 OBS 联动评级
+// OBS 不是开播的必备项（用户可以用其他推流工具），所以即使启用了 OBS 但未连接，
+// 也只算 warning（提醒）而非 danger（红色严重错误）。
+const obsStatus = computed(() => {
+  if (!store.obs.enabled) {
+    return { status: "info", text: "未启用" }
+  }
+  if (!store.obs.connected) {
+    return { status: "warning", text: "未连接" }
+  }
+  if (store.obs.streaming) {
+    return { status: "success", text: "推流中" }
+  }
+  return { status: "warning", text: "已连接，未推流" }
+})
+
+// 更新体检数据
+async function updateDiagnosticData() {
+  try {
+    const stats = await getSystemStats()
+    if (stats) {
+      systemCpu.value = stats.cpu || 0
+      systemMemory.value = stats.memory || 0
+    }
+  } catch (err) {
+    console.error("更新系统资源失败:", err)
+  }
+
+  try {
+    const delay = await getNetworkDelay()
+    if (delay !== undefined) {
+      networkLatency.value = delay
+    }
+  } catch (err) {
+    console.error("更新网络延时失败:", err)
+  }
+}
+
+// 重新检测 (600ms 加载动画模拟深度检测)
+async function triggerReDiagnostic() {
+  if (diagnosticLoading.value) return
+  diagnosticLoading.value = true
+  diagnosticRunCount.value++
+  await updateDiagnosticData()
+  await new Promise(resolve => setTimeout(resolve, 600))
+  diagnosticLoading.value = false
+  showToast("开播前软硬件安全体检完成！")
+}
+
 const toast = ref("")
 const qrLoginRunning = ref(false)
 const loginForm = reactive({
@@ -875,6 +1717,8 @@ const loginForm = reactive({
 })
 const commentText = ref("")
 const commentInputRef = ref(null)
+const showAddManagerInput = ref(false)
+const addManagerUid = ref("")
 const coverPreviewSrc = ref("")
 const overlayBaseUrl = ref("")
 const logPath = ref("")
@@ -882,165 +1726,6 @@ const systemFonts = ref(["Microsoft YaHei", "Noto Sans SC", "Segoe UI", "Arial",
 const previewPlaceholder = { id: 0, nickname: "AcFun用户", content: "这是一条弹幕预览，样式会同步到 OBS 浏览器源。" }
 const previewItems = ref([previewPlaceholder])
 let previewItemSeq = 1
-const previewPool = [
-  { nickname: "AC娘亲卫队", content: "认真你就输啦，AC娘镇楼" },
-  { nickname: "蕉皇驾到", content: "已投三根香蕉，主播加油" },
-  { nickname: "鬼畜全明星", content: "鬼畜全明星永远的神" },
-  { nickname: "鬼畜区路人", content: "这素材建议剪个金坷垃版本" },
-  { nickname: "滑板鞋赛车手", content: "摩擦摩擦，魔鬼的步伐" },
-  { nickname: "荼荼丸门徒", content: "求音MAD大佬来调教这段" },
-  { nickname: "严选娘粉", content: "严选娘和TD娘同框可还行" },
-  { nickname: "阿婵小护卫", content: "阿婵今天也是元气满满" },
-  { nickname: "镇站之宝", content: "主播是新晋镇站之宝，233333" },
-  { nickname: "白屏受害者", content: "AC娘是不是又大姨妈了" },
-  { nickname: "二次元绅士", content: "我从未见过如此厚颜无耻之人" },
-  { nickname: "雷电法王", content: "阿妹你看，上帝压狗" },
-  { nickname: "弹幕护体", content: "弹幕护体，雪豹闭嘴！" },
-  { nickname: "前方高能", content: "高能预警，先打个码再看" },
-  { nickname: "老司机带带我", content: "233333 主播带带我飞" },
-  { nickname: "硬核绅士", content: "内容很硬核，再送主播一根香蕉" },
-  { nickname: "数码玩家", content: "视频清晰度爆表，资讯量真足" },
-  { nickname: "网络冲浪手", content: "网络稳得一批，全程零卡顿" },
-  { nickname: "码农路过", content: "建议主播换台计算机，性能更猛" },
-  { nickname: "新软件迷", content: "求主播推荐一款好用的软件" },
-  { nickname: "信息搬运工", content: "这条信息更新得太快了吧" },
-  { nickname: "光速摸鱼", content: "激光秀拉满，眼睛要瞎啦" },
-  { nickname: "数据党", content: "数据太顶，必须收藏起来反复看" },
-  { nickname: "审核辛苦组", content: "审核大大辛苦了，求过审" },
-  { nickname: "天下漫友", content: "天下漫友是一家，干杯！" },
-  { nickname: "猴山老AC", content: "当年猴山的味道又回来了" },
-  { nickname: "番剧爱好者", content: "看完番剧顺手摸进直播间" },
-  { nickname: "弹幕大军", content: "然而并没有什么卵用，233" },
-  { nickname: "永恒老粉", content: "我永远喜欢AC娘，永远的家" },
-  { nickname: "投蕉路过", content: "路过投蕉，主播继续冲" },
-  { nickname: "鸡盒肥肥", content: "单刷鸡盒" },
-  { nickname: "休斯顿", content: "休斯顿，我们有麻烦了" },
-  { nickname: "倒计时", content: "倒计时-发射成功" },
-  { nickname: "发射员", content: "倒计时-发射失败-等等" },
-  { nickname: "SAGE", content: "吃我SAGE啦" },
-  { nickname: "MC石头", content: "认准唯一QQ" },
-  { nickname: "嗨呀酱", content: "嗨呀我又来这个串了" },
-  { nickname: "欢乐jb", content: "我好高兴，因为我是欢乐jb" },
-  { nickname: "卧铺肥肥", content: "一上火车就大喊，嗨呀我又来坐卧铺了" },
-  { nickname: "po主", content: "我每天来这个串看看po有没有更新的ᕕ( ᐛ )ᕗ" },
-  { nickname: "阴阳酱", content: "(　^ω^)(　ˇωˇ)" },
-  { nickname: "小殇君", content: "(｡◕∀◕｡)" },
-  { nickname: "弱智酱", content: "( ﾟ∀。) 这怎么回事" },
-  { nickname: "牛子", content: "(つд⊂)" },
-  { nickname: "齐齐蛤尔", content: "(`ヮ´ )σ`∀´) ﾟ∀ﾟ)σ" },
-  { nickname: "忧郁傻卵", content: "( ·_ゝ·)" },
-  { nickname: "举高高", content: "(ノﾟ∀ﾟ)ノ 生日快乐" },
-  { nickname: "電柱", content: "┃電柱┃д⊂)" },
-  { nickname: "口水酱", content: "( ´ρ`)" },
-  { nickname: "打脸酱", content: "⊂彡☆))д`)" },
-  { nickname: "喂我酱", content: "σ( ᑒ )" },
-  { nickname: "防剧透", content: "[h]这里是防剧透文字[/h]" },
-]
-const aIslandEmotes = [
-  "|∀ﾟ",
-  "(´ﾟДﾟ`)",
-  "(;´Д`)",
-  "(｀･ω･)",
-  "(=ﾟωﾟ)=",
-  "| ω・´)",
-  "|-` )",
-  "|д` )",
-  "|ー` )",
-  "|∀` )",
-  "(つд⊂)",
-  "(ﾟДﾟ≡ﾟДﾟ)",
-  "(＾o＾)ﾉ",
-  "(|||ﾟДﾟ)",
-  "( ﾟ∀ﾟ)",
-  "( ´∀`)",
-  "(*´∀`)",
-  "(*ﾟ∇ﾟ)",
-  "(*ﾟーﾟ)",
-  "(　ﾟ 3ﾟ)",
-  "( ´ー`)",
-  "( ・_ゝ・)",
-  "( ´_ゝ`)",
-  "(*´д`)",
-  "(・ー・)",
-  "(・∀・)",
-  "(ゝ∀･)",
-  "(〃∀〃)",
-  "(*ﾟ∀ﾟ*)",
-  "( ﾟ∀。)",
-  "( `д´)",
-  "(`ε´ )",
-  "(`ヮ´ )",
-  "σ`∀´)",
-  " ﾟ∀ﾟ)σ",
-  "ﾟ ∀ﾟ)ノ",
-  "(╬ﾟдﾟ)",
-  "(|||ﾟдﾟ)",
-  "( ﾟдﾟ)",
-  "Σ( ﾟдﾟ)",
-  "( ;ﾟдﾟ)",
-  "( ;´д`)",
-  "(　д ) ﾟ ﾟ",
-  "( ☉д⊙)",
-  "(((　ﾟдﾟ)))",
-  "( ` ・´)",
-  "( ´д`)",
-  "( -д-)",
-  "(>д<)",
-  "･ﾟ( ﾉд`ﾟ)",
-  "( TдT)",
-  "(￣∇￣)",
-  "(￣3￣)",
-  "(￣ｰ￣)",
-  "(￣ . ￣)",
-  "(￣皿￣)",
-  "(￣艸￣)",
-  "(￣︿￣)",
-  "(￣︶￣)",
-  "ヾ(´ωﾟ｀)",
-  "(*´ω`*)",
-  "(・ω・)",
-  "( ´・ω)",
-  "(｀・ω)",
-  "(´・ω・`)",
-  "(`・ω・´)",
-  "( `_っ´)",
-  "( `ー´)",
-  "( ´_っ`)",
-  "( ´ρ`)",
-  "( ﾟωﾟ)",
-  "(oﾟωﾟo)",
-  "(　^ω^)",
-  "(｡◕∀◕｡)",
-  "/( ◕‿‿◕ )\\",
-  "ヾ(´ε`ヾ)",
-  "(ノﾟ∀ﾟ)ノ",
-  "(σﾟдﾟ)σ",
-  "(σﾟ∀ﾟ)σ",
-  "|дﾟ )",
-  "┃電柱┃",
-  "ﾟ(つд`ﾟ)",
-  "ﾟÅﾟ )　",
-  "⊂彡☆))д`)",
-  "⊂彡☆))д´)",
-  "⊂彡☆))∀`)",
-  "(´∀((☆ミつ",
-  "･ﾟ( ﾉヮ´ )",
-  "(ﾉ)`ω´(ヾ)",
-  "ᕕ( ᐛ )ᕗ",
-  "(　ˇωˇ)",
-  "( ｣ﾟДﾟ)｣＜",
-  "( ›´ω`‹ )",
-  "(;´ヮ`)7",
-  "(`ゥ´ )",
-  "(`ᝫ´ )",
-  "( ᑭ`д´)ᓀ))д´)ᑫ",
-  "σ( ᑒ )",
-  "(`ヮ´ )σ`∀´) ﾟ∀ﾟ)σ",
-  "吁~~~~　　rnm，退钱！\n　　　/　　　/ \n(　ﾟ 3ﾟ) `ー´) `д´) `д´)",
-  "[h] [/h]",
-  "[n]",
-  "[n,m]",
-]
 const previewConverter = ref((text) => text)
 const streamKeyVisible = ref(false)
 const uiScalePercent = ref(100)
@@ -1077,7 +1762,13 @@ const tabs = [
 ]
 
 const currentTab = computed(() => tabs.find((item) => item.id === store.activeTab) || tabs[0])
-const subtitleParts = computed(() => highlightAcfun(currentTab.value.subtitle))
+const currentSubtitle = computed(() => {
+  if (currentTab.value.id === "account" && store.isLoggedIn) {
+    return "AcFun 账号信息与 acfunlive-backend 连接"
+  }
+  return currentTab.value.subtitle
+})
+const subtitleParts = computed(() => highlightAcfun(currentSubtitle.value))
 const userInitial = computed(() => (store.userName || "A").trim().slice(0, 1).toUpperCase())
 const themeIcon = computed(() => store.ui.theme === "dark" ? Sun : Moon)
 const sidebarToggleIcon = computed(() => {
@@ -1094,6 +1785,7 @@ const sidebarToggleTitle = computed(() => {
 })
 const appShellStyle = computed(() => ({
   zoom: store.ui.uiScale,
+  "--ui-scale": store.ui.uiScale,
   "--ui-scale-percent": uiScalePercent.value,
   "--ui-scale-fill": `${uiScalePercent.value - 50}%`,
 }))
@@ -1161,7 +1853,7 @@ const historyChartSeries = computed(() => {
     .filter((item) => item.time > 0)
     .sort((a, b) => a.time - b.time)
   if (normalized.length < 2) {
-    return { points: normalized, onlinePoints: "", danmakuPoints: "" }
+    return { points: normalized, onlinePoints: "", danmakuPoints: "", onlinePath: "", danmakuPath: "", onlineArea: "", danmakuArea: "" }
   }
   const withDelta = normalized.map((item, index) => {
     const previous = normalized[index - 1]
@@ -1185,13 +1877,49 @@ const historyChartSeries = computed(() => {
     onlineY: 220 - (item.onlineCount / maxOnline) * 196,
     danmakuY: 220 - (item[danmakuKey] / maxDanmaku) * 196,
   }))
+
+  // 贝塞尔平滑路径插值算法
+  const getBezierPath = (keyY) => {
+    if (chartPoints.length < 2) return ""
+    let d = `M ${chartPoints[0].x.toFixed(1)} ${chartPoints[0][keyY].toFixed(1)}`
+    for (let i = 0; i < chartPoints.length - 1; i++) {
+      const p0 = chartPoints[i]
+      const p1 = chartPoints[i + 1]
+      const cpX1 = p0.x + (p1.x - p0.x) / 3
+      const cpY1 = p0[keyY]
+      const cpX2 = p0.x + 2 * (p1.x - p0.x) / 3
+      const cpY2 = p1[keyY]
+      d += ` C ${cpX1.toFixed(1)} ${cpY1.toFixed(1)}, ${cpX2.toFixed(1)} ${cpY2.toFixed(1)}, ${p1.x.toFixed(1)} ${p1[keyY].toFixed(1)}`
+    }
+    return d
+  }
+
+  const onlinePath = getBezierPath("onlineY")
+  const danmakuPath = getBezierPath("danmakuY")
+
+  // 生成自适应底部 y=220 的渐变填充闭合面积
+  const getAreaPathSpec = (points, lineD, keyY) => {
+    if (points.length < 2 || !lineD) return ""
+    const first = points[0]
+    const last = points[points.length - 1]
+    return `M ${first.x.toFixed(1)} 220 L ${first.x.toFixed(1)} ${first[keyY].toFixed(1)} ${lineD.substring(1)} L ${last.x.toFixed(1)} 220 Z`
+  }
+
+  const onlineArea = getAreaPathSpec(chartPoints, onlinePath, "onlineY")
+  const danmakuArea = getAreaPathSpec(chartPoints, danmakuPath, "danmakuY")
+
   const toPolyline = (key) => chartPoints
     .map((item) => `${item.x.toFixed(1)},${item[key].toFixed(1)}`)
     .join(" ")
+
   return {
     points: chartPoints,
     onlinePoints: toPolyline("onlineY"),
     danmakuPoints: toPolyline("danmakuY"),
+    onlinePath,
+    danmakuPath,
+    onlineArea,
+    danmakuArea,
   }
 })
 function obsToggleStream() {
@@ -1208,6 +1936,116 @@ function obsToggleStream() {
 function openHistoryChart(item) {
   historyChartRecord.value = item
   historyChartHover.value = null
+}
+
+// 已经发起 GET_PLAYBACK 请求的 liveId（用于禁用按钮防重复点击）
+const playbackBusy = reactive({})
+
+async function openPlayback(item) {
+  if (!item || !item.liveId) {
+    return
+  }
+  let playback = item.playback
+  // 没有缓存就先去后端拉一次（关播后 liveID 仍可查询）
+  if (!playback?.url && !playback?.backupURL) {
+    if (playbackBusy[item.liveId]) {
+      return
+    }
+    playbackBusy[item.liveId] = true
+    try {
+      playback = await store.fetchPlayback(item.liveId)
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error)
+      showToast(`回放获取失败：${message}`)
+      return
+    } finally {
+      delete playbackBusy[item.liveId]
+    }
+  }
+  const target = playback?.url || playback?.backupURL
+  if (!target) {
+    showToast("该场没有回放可用")
+    return
+  }
+  run(() => openExternalURL(target), "已打开录播链接")
+}
+
+function openLiveCut() {
+  const target = store.live.liveCutInfo.redirectURL || store.live.liveCutInfo.url
+  if (!target) {
+    return
+  }
+  run(() => openExternalURL(target), "已打开剪辑页面")
+}
+
+// 下载本场录播：先复用/拉取 playback URL，再调 Wails 后端的保存对话框 + 流式下载。
+const downloadBusy = reactive({})
+
+function suggestPlaybackFileName(item) {
+  const base = String(item.title || item.liveId || "playback").replace(/[\\/:*?"<>|]+/g, "_").trim()
+  // 录播多为 mp4，加扩展名让保存对话框过滤器命中
+  return `${base || "playback"}.mp4`
+}
+
+async function downloadPlayback(item) {
+  if (!item || !item.liveId) {
+    return
+  }
+  if (downloadBusy[item.liveId]) {
+    return
+  }
+  downloadBusy[item.liveId] = true
+  try {
+    let playback = item.playback
+    if (!playback?.url && !playback?.backupURL) {
+      try {
+        playback = await store.fetchPlayback(item.liveId)
+      } catch (error) {
+        showToast(`录播获取失败：${error?.message || error}`)
+        return
+      }
+    }
+    const target = playback?.url || playback?.backupURL
+    if (!target) {
+      showToast("该场没有可下载的录播")
+      return
+    }
+    showToast("已开始下载录播，文件较大请耐心等待")
+    try {
+      const savedPath = await downloadPlaybackToFile(target, suggestPlaybackFileName(item))
+      if (savedPath) {
+        showToast(`录播已保存到：${savedPath}`)
+        store.log(`录播已保存到：${savedPath}`)
+      }
+      // savedPath 为空表示用户取消保存对话框，不弹错误
+    } catch (error) {
+      const message = error?.message || String(error)
+      store.log(`录播下载失败：${message}`)
+      showToast(`录播下载失败：${message}`)
+    }
+  } finally {
+    delete downloadBusy[item.liveId]
+  }
+}
+
+// 录像剪辑权限开关：避免并发点击 & 失败时手动把 input 还原到 store 当前值。
+const liveCutBusy = ref(false)
+async function onToggleLiveCut(event) {
+  if (liveCutBusy.value) {
+    event.target.checked = store.live.liveCutInfo.status
+    return
+  }
+  const checked = event.target.checked
+  liveCutBusy.value = true
+  try {
+    await store.setLiveCutCanCut(checked)
+    showToast(checked ? "已允许观众剪辑本次录像" : "已设为仅主播可剪辑")
+  } catch (error) {
+    event.target.checked = store.live.liveCutInfo.status
+    showToast(`录像剪辑权限设置失败：${error?.message || error}`)
+  } finally {
+    liveCutBusy.value = false
+  }
 }
 
 function toggleHistoryDanmakuChartMode() {
@@ -1241,6 +2079,14 @@ function applyUiScale() {
 function resetUiScale() {
   uiScalePercent.value = 100
   store.setUiScale(1)
+}
+
+function onOverlayScaleChange(event) {
+  const raw = Number(event.target.value)
+  const clamped = Math.min(200, Math.max(50, Number.isFinite(raw) ? raw : 100))
+  store.overlay.scale = clamped / 100
+  event.target.value = clamped
+  store.persist()
 }
 
 let sidebarToggleFlashTimer = 0
@@ -1319,6 +2165,18 @@ async function loadPreviewConverter() {
 }
 
 watch(() => store.overlay.convertChinese, () => loadPreviewConverter(), { immediate: true })
+
+// 把 overlay 样式实时推到 OBS 浏览器源（同源 SSE），避免每次改字号都要复制 URL 重连。
+let overlayBroadcastTimer = 0
+function pushOverlayStyle() {
+  try {
+    broadcastOverlayStyle(JSON.stringify(store.overlay))
+  } catch (_) {}
+}
+watch(() => store.overlay, () => {
+  window.clearTimeout(overlayBroadcastTimer)
+  overlayBroadcastTimer = window.setTimeout(pushOverlayStyle, 80)
+}, { deep: true, immediate: true })
 watch(() => store.ui.uiScale, (value) => {
   uiScalePercent.value = Math.round((Number(value) || 1) * 100)
 }, { immediate: true })
@@ -1355,6 +2213,8 @@ const overlayPreviewStyle = computed(() => ({
   "--overlay-name-color": store.overlay.nameColor,
   "--overlay-bubble-color": store.overlay.bubbleColor,
   "--overlay-rounded": `${store.overlay.rounded}px`,
+  // 让主程序内的 overlay-preview 面板与 OBS 浏览器源同步整体缩放
+  zoom: store.overlay.scale || 1,
 }))
 
 function parseOverlayFont(font, defaultWeight = "inherit") {
@@ -1480,7 +2340,17 @@ const qrExpireText = computed(() => {
 })
 
 let refreshTimer = 0
+let tickerTimer = 0
+let diagnosticTimer = 0
+let floatThemeTimer = 0
+let floatRuntimeTimer = 0
 let coverPreviewRequest = 0
+
+watch(() => store.ui.theme, (theme) => {
+  if (!isMiniWindowProcess.value) {
+    setSharedTheme(theme).catch(() => {})
+  }
+})
 
 onMounted(async () => {
   updateExtremeNarrowSidebar()
@@ -1495,14 +2365,51 @@ onMounted(async () => {
       store.loadTranscodeInfo().catch(() => {})
     }
   }, 8000)
+  tickerTimer = window.setInterval(() => {
+    store.room.ticker++
+  }, 1000)
+  
+  // 启动开播体检定时器
+  updateDiagnosticData()
+  diagnosticTimer = window.setInterval(updateDiagnosticData, 3000)
+
+  // 检测是否是悬浮窗精简进程，若是则自动切入悬浮弹幕页面
+  const mini = await isMiniMode()
+  isMiniWindowProcess.value = mini
+  if (mini) {
+    floatDanmakuActive.value = true
+    await syncFloatRuntimeState()
+    await ensureFloatDanmuStarted()
+    await syncFloatTheme()
+    floatThemeTimer = window.setInterval(syncFloatTheme, 500)
+    floatRuntimeTimer = window.setInterval(syncFloatRuntimeState, 1000)
+  } else {
+    setSharedTheme(store.ui.theme).catch(() => {})
+    await publishFloatRuntimeState()
+    floatRuntimeTimer = window.setInterval(publishFloatRuntimeState, 1000)
+  }
 })
 
 onUnmounted(() => {
   store.rememberObsConnectionForNextLaunch()
   window.clearInterval(refreshTimer)
+  window.clearInterval(tickerTimer)
+  window.clearInterval(diagnosticTimer)
+  window.clearInterval(floatThemeTimer)
+  window.clearInterval(floatRuntimeTimer)
   window.clearTimeout(sidebarToggleFlashTimer)
   window.removeEventListener("resize", updateExtremeNarrowSidebar)
 })
+
+async function syncFloatTheme() {
+  try {
+    const theme = await getSharedTheme()
+    if ((theme === "dark" || theme === "light") && theme !== store.ui.theme) {
+      store.setTheme(theme)
+    }
+  } catch {
+  }
+}
 
 async function initializeNativeRuntime() {
   const [backendPortResult, overlayUrlResult, logPathResult] = await Promise.allSettled([
@@ -1513,8 +2420,21 @@ async function initializeNativeRuntime() {
   getSystemFonts().then((fonts) => {
     if (Array.isArray(fonts) && fonts.length) {
       systemFonts.value = fonts
+      const fallback = fonts.includes("Microsoft YaHei") ? "Microsoft YaHei" : fonts[0]
+      let dirty = false
       if (!fonts.includes(store.overlay.fontFamily)) {
-        store.overlay.fontFamily = fonts.includes("Microsoft YaHei") ? "Microsoft YaHei" : fonts[0]
+        store.overlay.fontFamily = fallback
+        dirty = true
+      }
+      if (!fonts.includes(store.overlay.nameFontFamily)) {
+        store.overlay.nameFontFamily = store.overlay.fontFamily
+        dirty = true
+      }
+      if (!fonts.includes(store.overlay.contentFontFamily)) {
+        store.overlay.contentFontFamily = store.overlay.fontFamily
+        dirty = true
+      }
+      if (dirty) {
         store.persist()
       }
     }
@@ -1625,6 +2545,23 @@ function handleCoverInput() {
 
 function selectCoverHistory(file) {
   store.setCoverFile(file)
+}
+
+function removeCoverHistory(file) {
+  const target = String(file || "").trim()
+  const current = String(store.live.coverFile || "").trim()
+  const isCurrentCover = target && current === target
+  const isLastCover = store.live.coverHistory.length === 1 && store.live.coverHistory[0] === file
+
+  store.removeCoverHistory(file)
+  delete coverThumbCache[file]
+
+  if (isCurrentCover || isLastCover) {
+    store.setCoverFile("")
+    coverPreviewRequest++
+    coverPreviewSrc.value = ""
+    coverImageReady.value = false
+  }
 }
 
 function setCoverAspect(value) {
@@ -1823,6 +2760,23 @@ async function saveCroppedCover() {
   return ok
 }
 
+function doAddManagerByUid() {
+  const uid = String(addManagerUid.value || "").trim()
+  if (!uid) {
+    showToast("请输入房管 UID")
+    return
+  }
+  if (!/^\d+$/.test(uid)) {
+    showToast("UID 必须是纯数字")
+    return
+  }
+  run(async () => {
+    await store.addManagerByUid(Number(uid))
+    addManagerUid.value = ""
+    showAddManagerInput.value = false
+  }, "添加房管成功")
+}
+
 async function sendComment() {
   await run(async () => {
     await store.sendComment(commentText.value)
@@ -1904,6 +2858,44 @@ function formatTime(value) {
 
 function displayCount(value) {
   return value === undefined || value === null || value === "" ? "-" : value
+}
+
+function rankRowClass(rank) {
+  if (rank === 1) return "rank-row-top rank-row-gold"
+  if (rank === 2) return "rank-row-top rank-row-silver"
+  if (rank === 3) return "rank-row-top rank-row-bronze"
+  return ""
+}
+
+function rankBadgeClass(rank) {
+  if (rank === 1) return "rank-badge-gold"
+  if (rank === 2) return "rank-badge-silver"
+  if (rank === 3) return "rank-badge-bronze"
+  return "rank-badge-default"
+}
+
+function medalWrapperLevelClass(level) {
+  // AcFun 官方 sprite 覆盖 1~20 级，超过 20 复用 lv-20 顶级渐变
+  const lvl = Math.max(1, Math.min(20, Number(level) || 1))
+  return `medal-lv-${lvl}`
+}
+
+function guardianInitial(nickname) {
+  const name = String(nickname || "?").trim()
+  return name ? name.charAt(0).toUpperCase() : "?"
+}
+
+async function refreshGuardianList() {
+  if (!store.isLoggedIn) {
+    showToast("请先登录后再刷新")
+    return
+  }
+  try {
+    await store.loadGuardianList()
+    showToast("守护团列表已刷新")
+  } catch (error) {
+    showToast(error && error.message ? error.message : "刷新失败")
+  }
 }
 
 function highlightAcfun(text) {

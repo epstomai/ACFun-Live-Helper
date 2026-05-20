@@ -5,11 +5,16 @@
       class="hsv-swatch"
       :style="{ backgroundColor: modelValue || 'transparent' }"
       :title="modelValue"
-      @click="open = !open"
+      @click="togglePop"
     >
       <span class="hsv-swatch-checker"></span>
     </button>
-    <div v-if="open" class="hsv-pop" @pointerdown.stop>
+    <div
+      v-if="open"
+      class="hsv-pop"
+      :class="[`place-x-${popPlaceX}`, `place-y-${popPlaceY}`]"
+      @pointerdown.stop
+    >
       <div
         class="hsv-plane"
         ref="planeRef"
@@ -20,9 +25,19 @@
       </div>
       <div class="hsv-slider hue">
         <input type="range" min="0" max="360" step="1" :value="h" @input="setH(+$event.target.value)" />
+        <span class="hsv-slider-thumb" :style="{ left: huePct + '%' }"></span>
+      </div>
+      <div class="hsv-slider sat" :style="{ background: satSliderBg }">
+        <input type="range" min="0" max="100" step="1" :value="s" @input="setS(+$event.target.value)" />
+        <span class="hsv-slider-thumb" :style="{ left: s + '%' }"></span>
+      </div>
+      <div class="hsv-slider val" :style="{ background: valSliderBg }">
+        <input type="range" min="0" max="100" step="1" :value="v" @input="setV(+$event.target.value)" />
+        <span class="hsv-slider-thumb" :style="{ left: v + '%' }"></span>
       </div>
       <div v-if="alpha" class="hsv-slider alpha" :style="{ '--alpha-bg': alphaSliderBg }">
         <input type="range" min="0" max="100" step="1" :value="aPct" @input="setA(+$event.target.value / 100)" />
+        <span class="hsv-slider-thumb" :style="{ left: aPct + '%' }"></span>
       </div>
       <div class="hsv-fields">
         <label><span>H</span><input type="number" min="0" max="360" :value="h" @input="setH(+$event.target.value)" /></label>
@@ -39,7 +54,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -50,13 +65,23 @@ const emit = defineEmits(["update:modelValue"])
 const rootRef = ref(null)
 const planeRef = ref(null)
 const open = ref(false)
+const popPlaceX = ref("left") // left | right
+const popPlaceY = ref("bottom") // bottom | top
 const h = ref(0)
 const s = ref(0)
 const v = ref(0)
 const a = ref(1)
 let updatingFromProp = false
 
+// 弹层估算尺寸：宽固定 220 + padding；高度按 plane 140 + 4 行滑块/输入大约 200。
+// 真实测量在打开后再做一次精确修正。
+const POP_W = 220
+const POP_H_BASE = 320
+const POP_GAP = 6
+
 const aPct = computed(() => Math.round(a.value * 100))
+// 自绘 thumb 用：把 hue 的 0-360 与 alpha 的 0-1 都换算到 0-100% 用作 left 定位
+const huePct = computed(() => (h.value / 360) * 100)
 
 const planeBackground = computed(() => {
   const hueColor = `hsl(${h.value}, 100%, 50%)`
@@ -73,19 +98,37 @@ const alphaSliderBg = computed(() => {
   return `linear-gradient(to right, rgba(${r},${g},${b},0), rgba(${r},${g},${b},1))`
 })
 
+// S / V 滑块的背景：沿当前 H 与另一维度，从 0 到 100 的实际颜色梯度
+const satSliderBg = computed(() => {
+  const c0 = hsvToRgb(h.value, 0, v.value)
+  const c1 = hsvToRgb(h.value, 100, v.value)
+  return `linear-gradient(to right, rgb(${c0.r},${c0.g},${c0.b}), rgb(${c1.r},${c1.g},${c1.b}))`
+})
+const valSliderBg = computed(() => {
+  const c0 = hsvToRgb(h.value, s.value, 0)
+  const c1 = hsvToRgb(h.value, s.value, 100)
+  return `linear-gradient(to right, rgb(${c0.r},${c0.g},${c0.b}), rgb(${c1.r},${c1.g},${c1.b}))`
+})
+
 const textValue = computed(() => formatColor())
 
 watch(() => props.modelValue, (val) => {
   parseColor(val || "")
 }, { immediate: true })
 
+function onResize() {
+  if (open.value) updatePlacement(true)
+}
+
 onMounted(() => {
   document.addEventListener("pointerdown", onDocClick)
   document.addEventListener("keydown", onKey)
+  window.addEventListener("resize", onResize)
 })
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", onDocClick)
   document.removeEventListener("keydown", onKey)
+  window.removeEventListener("resize", onResize)
 })
 
 function onDocClick(e) {
@@ -96,6 +139,50 @@ function onDocClick(e) {
 }
 function onKey(e) {
   if (e.key === "Escape") open.value = false
+}
+
+function togglePop() {
+  const next = !open.value
+  open.value = next
+  if (next) {
+    // 先用 swatch 在视口中的位置粗算方向，避免首帧弹出溢出
+    updatePlacement()
+    nextTick(() => updatePlacement(true))
+  }
+}
+
+function updatePlacement(measurePop = false) {
+  const root = rootRef.value
+  if (!root) return
+  const rect = root.getBoundingClientRect()
+  const vw = window.innerWidth || document.documentElement.clientWidth
+  const vh = window.innerHeight || document.documentElement.clientHeight
+  let popW = POP_W
+  let popH = POP_H_BASE
+  if (measurePop) {
+    const popEl = root.querySelector(".hsv-pop")
+    if (popEl) {
+      const r = popEl.getBoundingClientRect()
+      popW = Math.ceil(r.width) || popW
+      popH = Math.ceil(r.height) || popH
+    }
+  }
+  // 水平：默认 left:0 向右展开；若右边放不下且左边有空间则右对齐
+  const spaceRight = vw - rect.left
+  const spaceLeftAligned = rect.right
+  if (spaceRight < popW + 8 && spaceLeftAligned >= popW + 8) {
+    popPlaceX.value = "right"
+  } else {
+    popPlaceX.value = "left"
+  }
+  // 垂直：默认下方；若下方放不下且上方有空间则放上方
+  const spaceBelow = vh - rect.bottom
+  const spaceAbove = rect.top
+  if (spaceBelow < popH + POP_GAP + 8 && spaceAbove >= popH + POP_GAP + 8) {
+    popPlaceY.value = "top"
+  } else {
+    popPlaceY.value = "bottom"
+  }
 }
 
 function startPlaneDrag(e) {
@@ -258,8 +345,6 @@ function rgbToHex(r, g, b) {
 }
 .hsv-pop {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
   z-index: 50;
   display: grid;
   gap: 8px;
@@ -269,6 +354,22 @@ function rgbToHex(r, g, b) {
   border: 1px solid var(--line, rgba(36, 27, 32, 0.16));
   border-radius: 10px;
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+}
+.hsv-pop.place-x-left {
+  left: 0;
+  right: auto;
+}
+.hsv-pop.place-x-right {
+  right: 0;
+  left: auto;
+}
+.hsv-pop.place-y-bottom {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+.hsv-pop.place-y-top {
+  bottom: calc(100% + 6px);
+  top: auto;
 }
 .hsv-plane {
   position: relative;
@@ -315,23 +416,35 @@ function rgbToHex(r, g, b) {
   appearance: none;
   -webkit-appearance: none;
 }
+/* 隐藏原生 thumb，用下方 .hsv-slider-thumb 自绘，
+   这样 0% / 100% 时圆点中心可以精确贴住 track 两端，而不像默认 thumb 留半个圆点的边距。 */
 .hsv-slider input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid rgba(0, 0, 0, 0.7);
+  background: transparent;
+  border: none;
   cursor: pointer;
 }
 .hsv-slider input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.hsv-slider-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #fff;
   border: 2px solid rgba(0, 0, 0, 0.7);
-  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 .hsv-fields {
   display: grid;

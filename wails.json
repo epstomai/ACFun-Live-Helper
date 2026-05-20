@@ -1,6 +1,6 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "ACFun Live Helper",
+  "name": "AcFun Live Helper",
   "outputfilename": "ACFun Live Helper",
   "frontend:dir": ".",
   "frontend:install": "npm install",
@@ -12,8 +12,8 @@
   "devServer": "localhost:34115",
   "info": {
     "companyName": "Hakura",
-    "productName": "ACFun Live Helper",
+    "productName": "AcFun Live Helper",
     "productVersion": "1.0.0",
-    "comments": "ACFun live streaming helper powered by acfunlive-backend"
+    "comments": "AcFun live streaming helper powered by acfunlive-backend"
   }
 }

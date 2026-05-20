@@ -5,6 +5,7 @@ import {
   BackendTypes,
   LegacyDanmuTypes,
   mapBackendDanmuMessage,
+  normalizeGuardianList,
   normalizeManager,
   normalizeWatchingUser,
 } from "@/services/acfunBackend"
@@ -154,35 +155,137 @@ function renderCroppedDataUrl(sourceDataUrl, crop) {
   })
 }
 
-function demoLiveHistoryRecord() {
-  const baseTime = Date.now() - 1000 * 60 * 30
-  let danmakuCount = 0
-  const timeline = Array.from({ length: 61 }, (_, index) => {
-    const onlineCount = Math.max(0, Math.round(24 + index * 3.4 + Math.sin(index / 3) * 18 + Math.sin(index / 9) * 32))
-    danmakuCount += Math.max(0, Math.round(2 + Math.sin(index / 2) * 2 + index / 9))
-    return {
-      time: baseTime + index * 30 * 1000,
-      onlineCount,
-      danmakuCount,
-    }
+// 把 saved 中的直播历史规范化为 { [userId]: Record[] } 形式。
+// 兼容老格式 saved.liveHistory（全局数组）：把它迁移到当前 saved.userId 名下。
+function loadLiveHistoryByUser(saved) {
+  const raw = saved.liveHistoryByUser
+  const byUser = raw && typeof raw === "object" && !Array.isArray(raw) ? { ...raw } : {}
+  Object.keys(byUser).forEach((uid) => {
+    byUser[uid] = normalizeLiveHistoryRecords(byUser[uid])
   })
-  const lastPoint = timeline[timeline.length - 1]
-  return {
-    id: "demo-live-history-chart",
-    liveId: "demo-live-history-chart",
-    title: "测试直播曲线数据",
-    coverFile: "",
-    endedAt: new Date(baseTime + 30 * 60 * 1000).toLocaleString(),
-    endReason: "demo",
-    duration: "00:30:00",
-    watchCount: lastPoint.onlineCount,
-    likeCount: 862,
-    danmakuCount: lastPoint.danmakuCount,
-    diamond: 128,
-    gift: 36,
-    banana: 52,
-    timeline,
+  if (Array.isArray(saved.liveHistory) && saved.liveHistory.length) {
+    const oldUid = String(saved.userId || "")
+    if (oldUid && !byUser[oldUid]) {
+      byUser[oldUid] = normalizeLiveHistoryRecords(saved.liveHistory)
+    }
   }
+  return byUser
+}
+
+function normalizeLiveHistoryRecords(records) {
+  if (!Array.isArray(records)) {
+    return []
+  }
+  return records
+    .filter((item) => !isDemoLiveHistoryRecord(item))
+    .slice(0, 100)
+    .map((item) => {
+      // playback 是 GET_PLAYBACK 返回的带签名 URL，可能在一段时间后失效，
+      // 仅作为内存缓存使用，持久化时剔除掉，下次点击"回放"时重新拉取。
+      if (item && Object.prototype.hasOwnProperty.call(item, "playback")) {
+        const { playback, ...rest } = item
+        void playback
+        return rest
+      }
+      return item
+    })
+}
+
+function isDemoLiveHistoryRecord(record) {
+  return record?.liveId === "demo-live-history-chart" || record?.title === "测试直播曲线数据"
+}
+
+function localDateKey(timestamp = Date.now()) {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function localDayStartTimestamp(timestamp = Date.now()) {
+  const date = new Date(timestamp)
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+}
+
+function nextLocalDayStartTimestamp(timestamp = Date.now()) {
+  const date = new Date(timestamp)
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime()
+}
+
+function normalizeLiveDailyStatsByUser(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {}
+  }
+  return Object.entries(raw).reduce((result, [uid, stats]) => {
+    if (!stats || typeof stats !== "object" || Array.isArray(stats)) {
+      return result
+    }
+    const normalized = Object.entries(stats).reduce((days, [dateKey, value]) => {
+      const source = value && typeof value === "object" ? value.durationSeconds : value
+      const durationSeconds = Math.max(0, Math.floor(Number(source) || 0))
+      if (durationSeconds > 0) {
+        days[dateKey] = { durationSeconds }
+      }
+      return days
+    }, {})
+    if (Object.keys(normalized).length) {
+      result[String(uid)] = normalized
+    }
+    return result
+  }, {})
+}
+
+function normalizeLiveTimerByUser(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {}
+  }
+  return Object.entries(raw).reduce((result, [uid, value]) => {
+    const startedAt = Math.floor(Number(value?.startedAt) || 0)
+    if (startedAt > 0) {
+      const lastSeenAt = Math.max(startedAt, Math.floor(Number(value?.lastSeenAt) || startedAt))
+      result[String(uid)] = {
+        liveId: String(value?.liveId || ""),
+        startedAt,
+        lastSeenAt,
+      }
+    }
+    return result
+  }, {})
+}
+
+function addLiveDurationByDate(statsByUser, uid, startedAt, endedAt) {
+  const userId = String(uid || "")
+  const start = Math.floor(Number(startedAt) || 0)
+  const end = Math.floor(Number(endedAt) || 0)
+  if (!userId || start <= 0 || end <= start) {
+    return statsByUser
+  }
+  const nextByUser = { ...statsByUser }
+  const userStats = { ...(nextByUser[userId] || {}) }
+  let cursor = start
+  while (cursor < end) {
+    const dateKey = localDateKey(cursor)
+    const dayEnd = nextLocalDayStartTimestamp(cursor)
+    const segmentEnd = Math.min(end, dayEnd > cursor ? dayEnd : end)
+    const seconds = Math.floor((segmentEnd - cursor) / 1000)
+    if (seconds > 0) {
+      const old = userStats[dateKey] || {}
+      userStats[dateKey] = {
+        durationSeconds: Math.max(0, Math.floor(Number(old.durationSeconds) || 0)) + seconds,
+      }
+    }
+    if (segmentEnd <= cursor) {
+      break
+    }
+    cursor = segmentEnd
+  }
+  nextByUser[userId] = userStats
+  return nextByUser
+}
+
+function isNotLiveError(error) {
+  return /未开播|已关播|380023|129004/i.test(formatError(error))
 }
 
 function defaultState() {
@@ -191,8 +294,13 @@ function defaultState() {
   const savedObs = saved.obs || {}
   const savedUi = saved.ui || {}
   const savedProfile = saved.userProfile || {}
-  const demoHistory = demoLiveHistoryRecord()
-  const savedLiveHistory = Array.isArray(saved.liveHistory) ? saved.liveHistory : []
+  const liveHistoryByUser = loadLiveHistoryByUser(saved)
+  const liveDailyStatsByUser = normalizeLiveDailyStatsByUser(saved.liveDailyStatsByUser)
+  const liveTimerByUser = normalizeLiveTimerByUser(saved.liveTimerByUser)
+  const currentUid = String(saved.userId || "")
+  const savedLiveHistory = currentUid && Array.isArray(liveHistoryByUser[currentUid])
+    ? liveHistoryByUser[currentUid]
+    : []
   return {
     backendUrl: saved.backendUrl || "ws://localhost:15368/",
     connected: false,
@@ -207,12 +315,17 @@ function defaultState() {
       onlineCount: 0,
       likeCount: 0,
       bananaCount: 0,
+      diamondCount: 0,
       suppressOnlineCountUntil: 0,
       danmakuList: [],
       watchingList: [],
       managerList: [],
       billList: [],
       blockList: saved.blockList || [],
+      todayFansAdded: 0,
+      liveStartTime: 0,
+      accumulatedTime: 0,
+      ticker: 0,
     },
     live: {
       isLive: false,
@@ -230,6 +343,9 @@ function defaultState() {
       streamUrl: "",
       streamKey: "",
       transcodes: [],
+      // 直播剪辑信息（GET_LIVE_CUT_INFO）。
+      // status: 主播是否允许观众剪辑；主播自己在直播中总能拿到 url / redirectURL。
+      liveCutInfo: { status: false, url: "", redirectURL: "" },
     },
     obs: {
       enabled: savedObs.enabled || false,
@@ -257,18 +373,20 @@ function defaultState() {
       duration: "00:00:00",
       timeline: [],
     },
-    liveHistory: [
-      demoHistory,
-      ...savedLiveHistory.filter((item) => item.liveId !== demoHistory.liveId),
-    ].slice(0, 100),
+    // 当前登录用户的直播历史视图。真正的多账号存档在 liveHistoryByUser 里，
+    // persist() 会把 liveHistory 同步写回 liveHistoryByUser[当前 userId]。
+    liveHistory: savedLiveHistory.slice(0, 100),
+    liveHistoryByUser,
+    liveDailyStatsByUser,
+    liveTimerByUser,
     overlay: {
       width: savedOverlay.width || 420,
       height: savedOverlay.height || 720,
       maxItems: savedOverlay.maxItems || 18,
       fontSize: savedOverlay.fontSize || 18,
-      fontFamily: savedOverlay.fontFamily || "Microsoft YaHei, Noto Sans SC, sans-serif",
-      nameFontFamily: savedOverlay.nameFontFamily || savedOverlay.fontFamily || "Microsoft YaHei, Noto Sans SC, sans-serif",
-      contentFontFamily: savedOverlay.contentFontFamily || savedOverlay.fontFamily || "Microsoft YaHei, Noto Sans SC, sans-serif",
+      fontFamily: savedOverlay.fontFamily || "Microsoft YaHei",
+      nameFontFamily: savedOverlay.nameFontFamily || savedOverlay.fontFamily || "Microsoft YaHei",
+      contentFontFamily: savedOverlay.contentFontFamily || savedOverlay.fontFamily || "Microsoft YaHei",
       textColor: savedOverlay.textColor || "#ffffff",
       nameColor: savedOverlay.nameColor || "#fd4c5d",
       bubbleColor: savedOverlay.bubbleColor || "rgba(36, 27, 32, 0.78)",
@@ -277,6 +395,8 @@ function defaultState() {
       animation: savedOverlay.animation || "slide",
       rounded: savedOverlay.rounded || 18,
       gap: savedOverlay.gap || 10,
+      // 整体缩放：通过 CSS zoom 把 overlay 全部视觉元素按比例放大 / 缩小，OBS 浏览器源宽高不变。
+      scale: Number(savedOverlay.scale) > 0 ? Number(savedOverlay.scale) : 1,
       convertChinese: savedOverlay.convertChinese || "none",
     },
     logs: [],
@@ -287,11 +407,18 @@ function defaultState() {
       theme: savedUi.theme === "dark" ? "dark" : "light",
       sidebarCollapsed: Boolean(savedUi.sidebarCollapsed),
       uiScale: Math.min(1.3, Math.max(0.8, Number(savedUi.uiScale) || 1)),
+      guardianClubVisible: savedUi.guardianClubVisible !== false,
     },
     qrLogin: {
       status: "idle",
       imageData: "",
       expireTime: 0,
+    },
+    guardianClub: {
+      clubName: "",
+      medalCount: 0,
+      rankList: [],
+      loading: false,
     },
   }
 }
@@ -301,9 +428,43 @@ export const useLiveStore = defineStore("live", {
   getters: {
     isLoggedIn: (state) => Boolean(state.tokenInfo && state.userId),
     currentSubCategories: (state) => state.live.subCategories.filter((item) => item.categoryID === state.live.categoryId),
+    liveDurationSeconds: (state) => {
+      const _ = state.room.ticker
+      const uid = String(state.userId || "")
+      if (!uid) {
+        return 0
+      }
+      const todayKey = localDateKey()
+      const stats = state.liveDailyStatsByUser?.[uid]?.[todayKey]
+      const baseSeconds = Math.max(0, Math.floor(Number(stats?.durationSeconds) || 0))
+      if ((!state.live.isLive && !state.room.isLive) || !state.room.liveStartTime) {
+        return baseSeconds
+      }
+      const activeStart = Math.max(state.room.liveStartTime, localDayStartTimestamp())
+      const activeSeconds = Math.floor((Date.now() - activeStart) / 1000)
+      return baseSeconds + Math.max(0, activeSeconds)
+    },
+    formattedLiveDuration() {
+      const totalSeconds = this.liveDurationSeconds
+      const hours = Math.floor(totalSeconds / 3600)
+      const minutes = Math.floor((totalSeconds % 3600) / 60)
+      const seconds = totalSeconds % 60
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    },
   },
   actions: {
     persist() {
+      // 把当前登录用户的 liveHistory 同步进 liveHistoryByUser，避免账号切换后丢失。
+      const uid = String(this.userId || "")
+      const byUserSnapshot = { ...this.liveHistoryByUser }
+      if (uid) {
+        byUserSnapshot[uid] = normalizeLiveHistoryRecords(this.liveHistory)
+      }
+      this.liveHistoryByUser = byUserSnapshot
+      const liveDailyStatsByUser = normalizeLiveDailyStatsByUser(this.liveDailyStatsByUser)
+      const liveTimerByUser = normalizeLiveTimerByUser(this.liveTimerByUser)
+      this.liveDailyStatsByUser = liveDailyStatsByUser
+      this.liveTimerByUser = liveTimerByUser
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         backendUrl: this.backendUrl,
         tokenInfo: this.tokenInfo,
@@ -318,7 +479,9 @@ export const useLiveStore = defineStore("live", {
         coverAspect: this.live.coverAspect,
         categoryId: this.live.categoryId,
         subCategoryId: this.live.subCategoryId,
-        liveHistory: this.liveHistory,
+        liveHistoryByUser: byUserSnapshot,
+        liveDailyStatsByUser,
+        liveTimerByUser,
         overlay: this.overlay,
         obs: {
           enabled: this.obs.enabled,
@@ -345,6 +508,110 @@ export const useLiveStore = defineStore("live", {
     setUiScale(value) {
       this.ui.uiScale = Math.min(1.3, Math.max(0.8, Number(value) || 1))
       this.persist()
+    },
+    toggleGuardianClubVisible() {
+      this.ui.guardianClubVisible = !this.ui.guardianClubVisible
+      this.persist()
+    },
+    // 把 liveHistoryByUser[当前 userId] 加载到 this.liveHistory（账号切换时调用）
+    loadHistoryForCurrentUser() {
+      const uid = String(this.userId || "")
+      if (!uid) {
+        this.liveHistory = []
+        return
+      }
+      const arr = this.liveHistoryByUser[uid]
+      this.liveHistory = normalizeLiveHistoryRecords(arr)
+    },
+    // 把当前 liveHistory 视图保存回 liveHistoryByUser[当前 userId]（账号切换前调用）
+    saveHistoryForCurrentUser() {
+      const uid = String(this.userId || "")
+      if (!uid) {
+        return
+      }
+      this.liveHistoryByUser = {
+        ...this.liveHistoryByUser,
+        [uid]: normalizeLiveHistoryRecords(this.liveHistory),
+      }
+    },
+    startLiveTimer(liveId, timestamp = Date.now()) {
+      const uid = String(this.userId || "")
+      if (!uid) {
+        return
+      }
+      const liveIdText = String(liveId || "")
+      const old = this.liveTimerByUser[uid]
+      if (old?.startedAt && (!old.liveId || old.liveId === liveIdText)) {
+        const startedAt = Math.floor(Number(old.startedAt) || timestamp)
+        this.room.liveStartTime = startedAt
+        this.liveTimerByUser = {
+          ...this.liveTimerByUser,
+          [uid]: {
+            liveId: liveIdText || old.liveId || "",
+            startedAt,
+            lastSeenAt: Math.max(startedAt, Math.floor(timestamp)),
+          },
+        }
+        return
+      }
+      if (old?.startedAt) {
+        this.finishLiveTimer(Math.floor(Number(old.lastSeenAt) || timestamp), true)
+      }
+      this.room.liveStartTime = timestamp
+      this.liveTimerByUser = {
+        ...this.liveTimerByUser,
+        [uid]: {
+          liveId: liveIdText,
+          startedAt: timestamp,
+          lastSeenAt: timestamp,
+        },
+      }
+    },
+    markLiveTimerSeen(liveId, timestamp = Date.now()) {
+      const uid = String(this.userId || "")
+      if (!uid) {
+        return
+      }
+      const liveIdText = String(liveId || "")
+      const old = this.liveTimerByUser[uid]
+      if (!old?.startedAt) {
+        this.startLiveTimer(liveIdText, timestamp)
+        return
+      }
+      if (old.liveId && liveIdText && old.liveId !== liveIdText) {
+        this.finishLiveTimer(Math.floor(Number(old.lastSeenAt) || timestamp), true)
+        this.startLiveTimer(liveIdText, timestamp)
+        return
+      }
+      this.liveTimerByUser = {
+        ...this.liveTimerByUser,
+        [uid]: {
+          liveId: liveIdText || old.liveId || "",
+          startedAt: old.startedAt,
+          lastSeenAt: Math.max(Math.floor(Number(old.lastSeenAt) || old.startedAt), Math.floor(timestamp)),
+        },
+      }
+      this.room.liveStartTime = Math.floor(Number(old.startedAt) || timestamp)
+    },
+    finishLiveTimer(endedAt = Date.now(), useLastSeen = false) {
+      const uid = String(this.userId || "")
+      if (!uid) {
+        return
+      }
+      const old = this.liveTimerByUser[uid]
+      if (!old?.startedAt) {
+        this.room.liveStartTime = 0
+        this.room.accumulatedTime = 0
+        return
+      }
+      const fallbackEnd = useLastSeen ? old.lastSeenAt : endedAt
+      const effectiveEnd = Math.floor(Number(fallbackEnd) || Number(old.lastSeenAt) || endedAt)
+      this.liveDailyStatsByUser = addLiveDurationByDate(this.liveDailyStatsByUser, uid, old.startedAt, effectiveEnd)
+      const nextTimers = { ...this.liveTimerByUser }
+      delete nextTimers[uid]
+      this.liveTimerByUser = nextTimers
+      this.room.liveStartTime = 0
+      this.room.accumulatedTime = 0
     },
     log(message) {
       const text = String(message || "")
@@ -420,19 +687,30 @@ export const useLiveStore = defineStore("live", {
       await this.connect()
       return acfunBackend.request(type, data, options)
     },
+    async ensureBackendToken() {
+      if (!this.tokenInfo) {
+        return
+      }
+      await this.connect()
+      await acfunBackend.setToken(this.tokenInfo)
+    },
     async restoreSession() {
       if (!this.tokenInfo) {
         return
       }
       try {
-        await this.connect()
-        await acfunBackend.setToken(this.tokenInfo)
-        this.userId = String(this.tokenInfo.userID || this.userId)
+        await this.ensureBackendToken()
+        const nextUserId = String(this.tokenInfo.userID || this.userId)
+        if (nextUserId !== String(this.userId || "")) {
+          this.finishLiveTimer(Date.now(), !(this.live.isLive || this.room.isLive))
+          this.saveHistoryForCurrentUser()
+        }
+        this.userId = nextUserId
+        this.loadHistoryForCurrentUser()
+        this.persist()
         await this.refreshUser()
-        this.activeTab = "live"
         await this.loadStartupLiveData()
         await this.startDanmu()
-        this.switchToRoomIfLive()
       } catch (error) {
         this.lastError = formatError(error)
         this.log(`恢复登录失败：${this.lastError}`)
@@ -441,15 +719,16 @@ export const useLiveStore = defineStore("live", {
     async login(account, password) {
       await this.connect()
       const tokenInfo = await acfunBackend.login(account, password)
+      this.finishLiveTimer(Date.now(), !(this.live.isLive || this.room.isLive))
+      this.saveHistoryForCurrentUser()
       this.tokenInfo = tokenInfo
       this.userId = String(tokenInfo.userID || "")
       await this.refreshUser()
+      this.loadHistoryForCurrentUser()
       this.persist()
       this.log(`登录成功：${this.userName || this.userId}`)
-      this.activeTab = "live"
       await this.loadStartupLiveData()
       await this.startDanmu()
-      this.switchToRoomIfLive()
     },
     async loginWithQRCode() {
       await this.connect()
@@ -470,16 +749,17 @@ export const useLiveStore = defineStore("live", {
             this.qrLogin.status = "scanned"
           }
         })
+        this.finishLiveTimer(Date.now(), !(this.live.isLive || this.room.isLive))
+        this.saveHistoryForCurrentUser()
         this.tokenInfo = tokenInfo
         this.userId = String(tokenInfo.userID || "")
         this.qrLogin.status = "success"
         await this.refreshUser()
+        this.loadHistoryForCurrentUser()
         this.persist()
         this.log(`二维码登录成功：${this.userName || this.userId}`)
-        this.activeTab = "live"
         await this.loadStartupLiveData()
         await this.startDanmu()
-        this.switchToRoomIfLive()
       } catch (error) {
         this.qrLogin.status = "error"
         this.lastError = formatError(error)
@@ -488,19 +768,30 @@ export const useLiveStore = defineStore("live", {
       }
     },
     logout() {
+      this.finishLiveTimer(Date.now(), !(this.live.isLive || this.room.isLive))
+      this.saveHistoryForCurrentUser()
       this.tokenInfo = null
       this.userName = ""
       this.userId = ""
       this.userProfile = normalizeUserProfile()
+      this.loadHistoryForCurrentUser()
+      this.guardianClub.clubName = ""
+      this.guardianClub.medalCount = 0
+      this.guardianClub.rankList = []
+      this.guardianClub.loading = false
       this.room.liveId = ""
       this.room.isLive = false
       this.room.onlineCount = 0
       this.room.likeCount = 0
       this.room.bananaCount = 0
+      this.room.diamondCount = 0
       this.room.danmakuList = []
       this.room.watchingList = []
       this.room.managerList = []
       this.room.billList = []
+      this.room.todayFansAdded = 0
+      this.room.liveStartTime = 0
+      this.room.accumulatedTime = 0
       acfunBackend.close()
       this.persist()
     },
@@ -518,11 +809,13 @@ export const useLiveStore = defineStore("live", {
           this.live.liveId = profile.liveId
           this.room.isLive = true
           this.live.isLive = true
+          this.markLiveTimerSeen(profile.liveId)
         }
       } catch {
         this.userName = `UID ${this.userId}`
         this.userProfile = normalizeUserProfile({ nickname: this.userName }, this.userId)
       }
+      this.loadGuardianList().catch(() => {})
     },
     switchToRoomIfLive() {
       if (this.room.isLive || this.live.isLive || this.room.liveId || this.live.liveId) {
@@ -564,6 +857,9 @@ export const useLiveStore = defineStore("live", {
           const displayInfo = liveInfo.displayInfo || liveInfo.DisplayInfo || streamInfo.displayInfo || streamInfo.DisplayInfo || {}
           this.room.isLive = true
           this.room.liveId = streamInfo.liveID || ""
+          this.live.liveId = this.room.liveId || this.live.liveId
+          this.live.isLive = true
+          this.markLiveTimerSeen(this.room.liveId)
           this.live.streamName = streamInfo.streamName || this.live.streamName
           const onlineCount = parseCount(displayInfo.watchingCount, displayInfo.WatchingCount)
           if (onlineCount !== null) {
@@ -578,9 +874,19 @@ export const useLiveStore = defineStore("live", {
             this.room.bananaCount = bananaCount
           }
           await this.loadTranscodeInfo()
+          // 拿到 liveID 后异步拉取剪辑信息 + 当前剪辑权限开关，失败不阻塞弹幕监听
+          this.loadLiveCutInfo().catch(() => {})
+          this.loadLiveCutStatus().catch(() => {})
         }
       } catch (error) {
-        this.log(`弹幕监听未启动：${formatError(error)}`)
+        const message = formatError(error)
+        // "直播已关播 / 主播未开播" 是预期未开播态，不污染用户日志，仅写控制台。
+        const isOffline = /已关播|未开播|129004|380023/.test(message)
+        if (isOffline) {
+          console.info("[startDanmu]", message)
+        } else {
+          this.log(`弹幕监听未启动：${message}`)
+        }
       }
     },
     async stopDanmu() {
@@ -612,6 +918,19 @@ export const useLiveStore = defineStore("live", {
           this.room.bananaCount = bananaCount
         }
       }
+      if (message.type === BackendDanmuTypes.GIFT && message.data) {
+        const giftDetail = message.data.giftDetail || {}
+        if (giftDetail.payWalletType === 1) {
+          const price = Number(giftDetail.price || 0)
+          const count = Number(message.data.count || 1)
+          const combo = Number(message.data.combo || 1)
+          const addedDiamond = price * count * combo * 100
+          this.room.diamondCount = (this.room.diamondCount || 0) + addedDiamond
+        }
+      }
+      if (message.type === BackendDanmuTypes.FOLLOW_AUTHOR) {
+        this.room.todayFansAdded = (this.room.todayFansAdded || 0) + 1
+      }
       if (message.type === BackendDanmuTypes.TOP_USERS && Array.isArray(message.data)) {
         this.room.billList = message.data
           .map(normalizeWatchingUser)
@@ -619,7 +938,18 @@ export const useLiveStore = defineStore("live", {
           .sort((a, b) => amountValue(b.displaySendAmount) - amountValue(a.displaySendAmount))
       }
       if (message.type === BackendDanmuTypes.DANMU_STOP) {
-        this.room.isLive = false
+        // 后端检测到主播关播会推 DANMU_STOP。
+        // 任何"还有 liveId 但还没记历史"的情况都触发自动收尾，避免漏记。
+        // handleAutoStop 内部自带防重入，多次触发只会清状态、不会重复写历史。
+        const liveId = this.live.liveId || this.room.liveId || this.summary.liveId
+        const needFinalize = !!liveId && !this.liveHistory.some((it) => it.liveId === liveId)
+        if (needFinalize) {
+          this.handleAutoStop("danmu stop").catch((error) => {
+            this.log(`自动关播收尾失败：${formatError(error)}`)
+          })
+        } else {
+          this.room.isLive = false
+        }
       }
       if (message.type === BackendDanmuTypes.DANMU_STOP_ERROR) {
         this.log(`弹幕错误：${message.data?.error || "未知错误"}`)
@@ -673,9 +1003,25 @@ export const useLiveStore = defineStore("live", {
         if (info.liveID) {
           this.live.liveId = info.liveID
           this.live.isLive = true
-        }
-        if (info.liveID) {
+          this.markLiveTimerSeen(info.liveID)
+          this.persist()
           await this.loadWatchingList()
+        } else {
+          // GET_USER_LIVE_INFO 返回空 liveID → 主播未在直播。
+          // 如果之前还认为在直播（timer/isLive/summary 任一有线索），自动走收尾，把本场写入历史。
+          const uid = String(this.userId || "")
+          const hadOngoingSession =
+            this.live.isLive ||
+            !!this.liveTimerByUser[uid]?.startedAt ||
+            !!this.summary.liveId
+          if (hadOngoingSession) {
+            this.handleAutoStop("room offline").catch((error) => {
+              this.log(`自动关播收尾失败：${formatError(error)}`)
+            })
+          } else {
+            this.live.isLive = false
+            this.live.liveId = ""
+          }
         }
       } catch (error) {
         this.log(`直播间信息获取失败：${formatError(error)}`)
@@ -702,9 +1048,47 @@ export const useLiveStore = defineStore("live", {
       const list = await this.request(BackendTypes.GET_MANAGER_LIST)
       this.room.managerList = Array.isArray(list) ? list.map(normalizeManager) : []
     },
+    async loadGuardianList() {
+      if (!this.userId) {
+        return
+      }
+      this.guardianClub.loading = true
+      try {
+        const payload = await this.request(BackendTypes.GET_MEDAL_RANK_LIST, {
+          liverUID: Number(this.userId),
+        })
+        const normalized = normalizeGuardianList(payload)
+        this.guardianClub.clubName = normalized.clubName
+        this.guardianClub.medalCount = normalized.medalCount
+        this.guardianClub.rankList = normalized.rankList
+      } catch (error) {
+        this.log(`守护团列表加载失败：${formatError(error)}`)
+        throw error
+      } finally {
+        this.guardianClub.loading = false
+      }
+    },
     async addManager(user) {
       await this.request(BackendTypes.ADD_MANAGER, { managerUID: Number(user.userId) })
       this.log(`添加房管：${user.nickname} (${user.userId})`)
+      await this.loadManagerList()
+    },
+    async addManagerByUid(uid) {
+      const userId = Number(uid)
+      if (!userId || isNaN(userId)) {
+        throw new Error("请输入有效的 UID")
+      }
+      let nickname = `UID ${userId}`
+      try {
+        const info = await this.request(BackendTypes.GET_USER_INFO, { userID: userId })
+        if (info && info.nickname) {
+          nickname = info.nickname
+        }
+      } catch (error) {
+        this.log(`获取用户(${userId})信息失败：${error.message || error}，将直接尝试添加`)
+      }
+      await this.request(BackendTypes.ADD_MANAGER, { managerUID: userId })
+      this.log(`添加房管：${nickname} (${userId})`)
       await this.loadManagerList()
     },
     async deleteManager(user) {
@@ -754,16 +1138,135 @@ export const useLiveStore = defineStore("live", {
       })
       this.log(`弹幕已发送：${text}`)
     },
+    // 拉取指定 liveID 的录播信息（GET_PLAYBACK），并把结果缓存到对应的历史记录上。
+    // 关播后该 liveID 仍可继续查询，可用于"直播历史"里点开回放。
+    async fetchPlayback(liveId) {
+      const id = String(liveId || "").trim()
+      if (!id) {
+        return null
+      }
+      try {
+        const data = await this.request(BackendTypes.GET_PLAYBACK, { liveID: id })
+        const playback = {
+          duration: Number(data?.duration) || 0,
+          url: String(data?.url || ""),
+          backupURL: String(data?.backupURL || ""),
+        }
+        this.setHistoryPlayback(id, playback)
+        return playback
+      } catch (error) {
+        this.log(`回放获取失败 (${id})：${formatError(error)}`)
+        throw error
+      }
+    },
+    setHistoryPlayback(liveId, playback) {
+      const id = String(liveId || "")
+      if (!id) {
+        return
+      }
+      // 仅更新内存中的 liveHistory；playback 不会持久化（normalizeLiveHistoryRecords 会剔除），
+      // 所以这里不调用 persist()，避免不必要的存储写入。
+      this.liveHistory = this.liveHistory.map((item) => (
+        item.liveId === id ? { ...item, playback } : item
+      ))
+    },
+    // 查询"是否允许观众剪辑本次直播录像"的开关状态（GET_LIVE_CUT_STATUS）。
+    // 与 loadLiveCutInfo 互补：后者拿 url / redirectURL，本接口仅返回 canCut 布尔。
+    async loadLiveCutStatus() {
+      if (!this.userId) {
+        return
+      }
+      try {
+        const data = await this.request(BackendTypes.GET_LIVE_CUT_STATUS)
+        this.live.liveCutInfo = {
+          ...this.live.liveCutInfo,
+          status: Boolean(data?.canCut),
+        }
+      } catch (error) {
+        if (!isNotLiveError(error)) {
+          this.log(`录像剪辑开关状态获取失败：${formatError(error)}`)
+        }
+      }
+    },
+    // 设置"是否允许观众剪辑本次直播录像"（SET_LIVE_CUT_STATUS）。
+    // 成功后乐观更新本地 status，失败抛出错误由 UI 决定是否回滚。
+    async setLiveCutCanCut(canCut) {
+      if (!this.userId) {
+        throw new Error("未登录，无法修改录像剪辑权限")
+      }
+      const next = Boolean(canCut)
+      await this.request(BackendTypes.SET_LIVE_CUT_STATUS, { canCut: next })
+      this.live.liveCutInfo = {
+        ...this.live.liveCutInfo,
+        status: next,
+      }
+      this.log(next ? "已允许观众剪辑本次录像" : "已设为仅主播可剪辑")
+    },
+    // 拉取直播剪辑信息（GET_LIVE_CUT_INFO），仅在主播当前在直播中可用。
+    // 失败时若是"未开播/已关播"类错误则静默，避免日志刷屏。
+    async loadLiveCutInfo() {
+      if (!this.userId) {
+        return
+      }
+      const liveId = this.live.liveId || this.room.liveId
+      if (!liveId) {
+        return
+      }
+      try {
+        const data = await this.request(BackendTypes.GET_LIVE_CUT_INFO, {
+          liverUID: Number(this.userId),
+          liveID: liveId,
+        })
+        this.live.liveCutInfo = {
+          status: Boolean(data?.status),
+          url: String(data?.url || ""),
+          redirectURL: String(data?.redirectURL || ""),
+        }
+      } catch (error) {
+        if (!isNotLiveError(error)) {
+          this.log(`直播剪辑信息获取失败：${formatError(error)}`)
+        }
+      }
+    },
     async loadLiveStatus() {
       try {
         const status = await this.request(BackendTypes.GET_LIVE_STATUS)
-        this.live.isLive = true
-        this.live.liveId = status.liveID || ""
+        const liveId = status.liveID || ""
+        this.live.isLive = Boolean(liveId)
+        this.live.liveId = liveId
         this.live.title = status.title || this.live.title
         this.live.streamName = status.streamName || this.live.streamName
-      } catch {
+        if (liveId) {
+          this.markLiveTimerSeen(liveId)
+          this.persist()
+          this.loadLiveCutInfo().catch(() => {})
+          this.loadLiveCutStatus().catch(() => {})
+        } else {
+          this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
+        }
+      } catch (error) {
+        if (isNotLiveError(error)) {
+          // 之前认为还在直播态，则走自动收尾，把本场写入历史；否则只清状态。
+          const uid = String(this.userId || "")
+          const hadOngoingSession =
+            this.live.isLive ||
+            this.room.isLive ||
+            !!this.liveTimerByUser[uid]?.startedAt ||
+            !!this.summary.liveId
+          if (hadOngoingSession) {
+            this.handleAutoStop("live status offline").catch((e) => {
+              this.log(`自动关播收尾失败：${formatError(e)}`)
+            })
+            return
+          }
+          this.room.isLive = false
+          this.room.liveId = ""
+          this.finishLiveTimer(Date.now(), true)
+          this.persist()
+        }
         this.live.isLive = false
         this.live.liveId = ""
+        this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
       }
     },
     async loadPushConfig() {
@@ -771,11 +1274,14 @@ export const useLiveStore = defineStore("live", {
       for (let attempt = 0; attempt < 4; attempt += 1) {
         try {
           const config = await this.request(BackendTypes.GET_PUSH_CONFIG, undefined, { timeout: 90000 })
+          const nextStreamKey = config.streamKey || ""
+          const previousStreamKey = this.live.streamKey
           this.live.streamName = config.streamName || ""
           this.live.streamUrl = config.rtmpServer || config.streamPushAddress?.[0] || ""
-          this.live.streamKey = config.streamKey || ""
+          this.live.streamKey = nextStreamKey
           this.persist()
-          if (this.live.streamUrl && this.live.streamKey) {
+          // 仅在 streamKey 实际变化时记录日志，避免未开播状态下被定时刷新反复刷屏
+          if (this.live.streamUrl && nextStreamKey && nextStreamKey !== previousStreamKey) {
             this.log("推流码已获取")
           }
           return
@@ -811,9 +1317,8 @@ export const useLiveStore = defineStore("live", {
       this.persist()
     },
     async loadTranscodeInfo() {
-      if (!this.live.streamName) {
-        await this.loadPushConfig()
-      }
+      // 未开播时不应自动回退到 loadPushConfig，否则定时刷新会让推流码每 8s 拉一次。
+      // 用户进入开播页或手动点"刷新转码"前会先调用 loadPushConfig；这里只在已有 streamName 时取转码。
       if (!this.live.streamName) {
         return
       }
@@ -842,6 +1347,9 @@ export const useLiveStore = defineStore("live", {
     },
     removeCoverHistory(file) {
       this.live.coverHistory = this.live.coverHistory.filter((item) => item !== file)
+      if (this.live.coverFile === file) {
+        this.live.coverFile = ""
+      }
       if (this.live.coverCrops && this.live.coverCrops[file]) {
         const next = { ...this.live.coverCrops }
         delete next[file]
@@ -894,9 +1402,13 @@ export const useLiveStore = defineStore("live", {
         subCategoryID: Number(this.live.subCategoryId),
       })
       this.live.isLive = true
-      this.live.liveId = data.liveID
+      this.live.isLive = true
       this.room.liveId = data.liveID
       this.room.isLive = true
+      this.room.diamondCount = 0
+      this.room.todayFansAdded = 0
+      this.startLiveTimer(data.liveID)
+      this.room.accumulatedTime = 0
       this.summary.liveId = data.liveID
       this.summary.timeline = []
       this.summary.danmakuCount = 0
@@ -905,6 +1417,61 @@ export const useLiveStore = defineStore("live", {
       this.log(`开播成功：${data.liveID}`)
       await this.startDanmu({ restart: true })
       await this.loadRoom()
+    },
+    // 任意自动检测到关播的路径都走这里收尾：
+    //   - DANMU_STOP 弹幕事件
+    //   - loadRoom 看到 GET_USER_LIVE_INFO 返回 liveID 为空
+    //   - loadLiveStatus 看到 "未开播/已关播" 错误
+    // 与 stopLive 不同：不向后端调 STOP_LIVE，但仍要 finishLiveTimer + persistLiveRecord
+    // + 异步 loadSummary / stopDanmu / 可选 stopObsStream。
+    //
+    // 防重入：基于 liveHistory 是否已包含该 liveId 判重，重复触发只清状态不再写历史。
+    async handleAutoStop(reason = "danmu stop") {
+      const liveId = this.live.liveId || this.room.liveId || this.summary.liveId
+      if (!liveId) {
+        this.live.isLive = false
+        this.room.isLive = false
+        this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
+        return
+      }
+      // 已经记录过这场 → 只清状态
+      if (this.liveHistory.some((item) => item.liveId === liveId)) {
+        this.live.isLive = false
+        this.room.isLive = false
+        this.live.liveId = ""
+        this.room.liveId = ""
+        this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
+        return
+      }
+      this.live.isLive = false
+      this.room.isLive = false
+      this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
+      this.summary.liveId = liveId
+      this.summary.endReason = this.summary.endReason || reason
+      this.summary.endedAt = this.summary.endedAt || new Date().toLocaleString()
+      // 用本场计时器估算 duration，避免历史里出现 00:00:00。
+      // finishLiveTimer 之后 liveStartTime 会被清零，必须先算。
+      if (!this.summary.duration || this.summary.duration === "00:00:00") {
+        const sessionMs = this.room.liveStartTime ? Math.max(0, Date.now() - this.room.liveStartTime) : 0
+        if (sessionMs > 0) {
+          this.summary.duration = this.formatDuration(sessionMs)
+        }
+      }
+      this.finishLiveTimer(Date.now(), false)
+      this.pushLiveTimelinePoint(true)
+      this.persistLiveRecord()
+      this.live.liveId = ""
+      this.room.liveId = ""
+      this.log(`检测到关播 (${reason})，已保存本场直播记录`)
+      this.loadSummary(liveId).catch((error) => {
+        this.log(`直播统计获取失败：${formatError(error)}`)
+      })
+      this.stopDanmu().catch(() => {})
+      if (this.obs.enabled && this.obs.stopStreamingAfterClose) {
+        this.stopObsStream().catch((error) => {
+          this.log(`OBS 停止推流失败：${formatError(error)}`)
+        })
+      }
     },
     async stopLive() {
       if (!this.live.liveId && !this.room.liveId) {
@@ -916,6 +1483,8 @@ export const useLiveStore = defineStore("live", {
       this.room.isLive = false
       this.live.liveId = ""
       this.room.liveId = ""
+      this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
+      this.finishLiveTimer(Date.now(), false)
       this.summary.liveId = liveId
       this.summary.endReason = info.endReason || "author stopped"
       this.summary.endedAt = new Date().toLocaleString()
@@ -1055,6 +1624,18 @@ export const useLiveStore = defineStore("live", {
       await this.syncObsStreamStatus(obs)
       await this.pushObsStreamSettings()
       this.log("OBS WebSocket 连接成功")
+    },
+    disconnectObs() {
+      this.obs.shouldRestoreConnection = false
+      this.obs.autoStartStatus = "idle"
+      if (obsClient && obsClient.isConnected()) {
+        obsClient.disconnect()
+      } else {
+        this.obs.connected = false
+        this.obs.streaming = false
+      }
+      this.persist()
+      this.log("已主动断开 OBS WebSocket")
     },
     async pushObsStreamSettings() {
       if (!this.live.streamUrl || !this.live.streamKey) {
