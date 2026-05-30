@@ -11,6 +11,7 @@ import {
 } from "@/services/acfunBackend"
 import { ObsWebSocketClient } from "@/services/obsWebSocket"
 import { appendLog as appendNativeLog, readCoverFile, saveCoverImage } from "@/services/nativeBridge"
+import { handleTtsDanmaku } from "@/services/tts"
 
 const STORAGE_KEY = "aclivehelper.state.v1"
 let obsClient = null
@@ -962,8 +963,26 @@ export const useLiveStore = defineStore("live", {
         if (!this.isDuplicateDanmaku(item)) {
           this.room.danmakuList.unshift(item)
           newDanmakuCount += 1
+
+          // === [TTS Debug] 打印收到的弹幕详情 ===
+          console.log("[TTS Debug] liveStore 成功接收到一条【未重复】的弹幕:", {
+            nickname: item.nickname,
+            content: item.content,
+            type: item.type,
+            isGift: item.isGift
+          });
+
+          try {
+            handleTtsDanmaku(item)
+          } catch (e) {
+            console.error("[TTS Debug] TTS 语音合成调用失败:", e)
+          }
+        } else {
+          // 如果弹幕被判定为重复，也会打印出来，方便排查是不是被去重拦截了
+          console.log("[TTS Debug] 收到一条弹幕，但被去重机制拦截了:", item.content);
         }
       })
+
       this.room.danmakuList = this.room.danmakuList.slice(0, 300)
       if (newDanmakuCount) {
         this.summary.danmakuCount = Number(this.summary.danmakuCount || 0) + newDanmakuCount
