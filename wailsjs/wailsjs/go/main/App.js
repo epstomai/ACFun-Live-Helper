@@ -10,12 +10,24 @@ export function BroadcastOverlayStyle(arg1) {
   return window['go']['main']['App']['BroadcastOverlayStyle'](arg1);
 }
 
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
 export function CopyText(arg1) {
   return window['go']['main']['App']['CopyText'](arg1);
 }
 
+export function DownloadAndInstallUpdate(arg1) {
+  return window['go']['main']['App']['DownloadAndInstallUpdate'](arg1);
+}
+
 export function DownloadPlaybackToFile(arg1, arg2) {
   return window['go']['main']['App']['DownloadPlaybackToFile'](arg1, arg2);
+}
+
+export function GenerateTTS(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['GenerateTTS'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function GetBackendPort() {
@@ -48,6 +60,10 @@ export function GetSystemFonts() {
 
 export function GetSystemStats() {
   return window['go']['main']['App']['GetSystemStats']();
+}
+
+export function GetTTSVoices() {
+  return window['go']['main']['App']['GetTTSVoices']();
 }
 
 export function IsMiniMode() {

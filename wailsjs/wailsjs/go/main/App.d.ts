@@ -6,9 +6,15 @@ export function AppendLog(arg1:string):Promise<void>;
 
 export function BroadcastOverlayStyle(arg1:string):Promise<void>;
 
+export function CheckForUpdate():Promise<main.UpdateInfo>;
+
 export function CopyText(arg1:string):Promise<void>;
 
+export function DownloadAndInstallUpdate(arg1:main.UpdateInfo):Promise<main.UpdateInstallResult>;
+
 export function DownloadPlaybackToFile(arg1:string,arg2:string):Promise<string>;
+
+export function GenerateTTS(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number,arg6:number,arg7:string):Promise<string>;
 
 export function GetBackendPort():Promise<number>;
 
@@ -25,6 +31,8 @@ export function GetSharedTheme():Promise<string>;
 export function GetSystemFonts():Promise<Array<string>>;
 
 export function GetSystemStats():Promise<main.SystemStatsResult>;
+
+export function GetTTSVoices():Promise<Array<main.TTSVoice>>;
 
 export function IsMiniMode():Promise<boolean>;
 

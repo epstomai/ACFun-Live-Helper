@@ -8,7 +8,7 @@
 
 面向 AcFun 直播主播的现代化桌面端助手。基于 **Wails v2 + Go + Vue 3 + Pinia** 构建，内嵌 `acfunlive-backend`，无需额外启动后端进程。
 
-> **当前版本**：`v1.0.0-rc.3` — [前往 Releases 下载](https://github.com/epstomai/ACFun-Live-Helper/releases/latest)
+> **当前版本**：`v1.1.0` — [前往 Releases 下载](https://github.com/epstomai/ACFun-Live-Helper/releases/latest)
 
 ## 目录
 
@@ -28,6 +28,7 @@
 ### 开播
 - 一键开播 / 关播；标题、封面（支持 GIF）、主分类与子分类编辑
 - OBS 推流码自动同步 + 一键复制；推流码未变化不刷屏
+- OBS 弹幕浏览器源 URL 可在连接后自动同步，手动同步后会立即刷新 OBS 浏览器源
 - 转码 / 推流通道信息实时显示
 - 直播录像剪辑权限开关（`SET_LIVE_CUT_STATUS`），支持打开剪辑页 / 复制原始链接
 - 本场计时实时刷新，跨重启 / 切账号不丢失（按 UID 持久化）
@@ -36,10 +37,12 @@
 - 弹幕 / 礼物 / 红包 / 关注 / 加入守护团 / 进场提示 实时流
 - 在线观众列表（含粉丝牌等级、贡献排名）；房管管理（搜索 / 加管 / 取消管理 / 踢出 / 拉黑 / 解除拉黑）
 - 弹幕互动：发送弹幕、颜文字快捷输入
+- 弹幕语音朗读（TTS）：支持 Edge TTS 神经网络语音与 Windows SAPI 本地兜底，可按弹幕 / 礼物类型控制朗读
 - 投喂榜（贡献排行）实时刷新
 
 ### 弹幕源 (OBS 浏览器源)
 - 后端固定本地端口 (`http://127.0.0.1:15370/danmaku-overlay.html`)，URL 不再每次启动变化，OBS 不需要反复改源
+- 可填写 OBS 浏览器源名称，连接 OBS 后自动写入当前弹幕源 URL；手动同步会同时触发 OBS `refreshnocache` 刷新
 - **SSE 实时推送样式**：在助手里调字号 / 颜色 / 缩放 / 动画 / 透明度 / 圆角等，OBS 浏览器源自动同步，**无需手动刷新**
 - 用户名与弹幕内容可分别指定字体；可搜索字体选择器，键盘上下键实时预览，未确认自动回滚
 - 气泡 / 文本颜色支持 HSV 选色器 + HEX / RGBA 输入 + Alpha 通道，弹层四象限自适应避免被边缘截断
@@ -62,6 +65,7 @@
 
 ### 系统
 - CPU / 内存 / 网络延迟实时监控
+- GitHub Release 更新检查；正式构建可自动下载并启动可用更新包
 - 内置日志面板，支持打开日志文件夹快速排错
 - 内嵌 `acfunlive-backend`，无需单独启动 / 配置后端
 
@@ -151,6 +155,13 @@ powershell -ExecutionPolicy Bypass -File .\build-windows.ps1
 └── wails.json            # Wails 项目配置
 ```
 
+## 1.1.0 更新重点
+
+- 新增弹幕 TTS：可朗读普通弹幕与礼物/香蕉，支持语速、音量、队列长度、朗读长度和发音人选择。
+- 新增 OBS 浏览器源 URL 同步：填写源名称后，连接 OBS 可自动写入弹幕源 URL；手动同步会立即刷新浏览器源。
+- 新增自动更新检查：主窗口右上角可检查 GitHub Release，正式构建支持下载并启动可安装更新包。
+- 优化弹幕源与 TTS 文本处理：颜文字、emoji、隐藏标签和中日文语种会更适合朗读。
+
 ## 下载
 
 前往 Releases 页面下载已发布版本：
@@ -169,7 +180,8 @@ powershell -ExecutionPolicy Bypass -File .\build-windows.ps1
   ffmpeg -i "xxx.ts" -c copy "xxx.mp4"
   ```
 
-- **OBS 浏览器源不刷新**：本版本已改用 SSE 实时推送，如果仍未生效，请确认 URL 端口是 `:15370` 且 OBS 浏览器源未启用 ``Shutdown source when not visible``。
+- **OBS 浏览器源不刷新**：先确认 URL 端口是 `:15370`。如果改的是源 URL，请在 OBS 联动里填写准确的浏览器源名称后点“同步弹幕源”，助手会写入 URL 并触发 OBS 刷新；样式变化则通过 SSE 实时推送。
+- **TTS 没声音**：Edge TTS 需要联网；网络不可用时会尝试 Windows SAPI。请确认系统音量、发音人选择和朗读开关状态。
 - **本场总结里时长 00:00:00**：通常是关播时 `GET_SUMMARY` 返回失败，助手会用本场计时器估算 duration 兜底，下次进入数据页会再尝试拉取真实总结。
 
 ## 开源协议

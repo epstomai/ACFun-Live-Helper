@@ -79,6 +79,32 @@ export async function openLogFolder() {
   return undefined
 }
 
+export async function checkForUpdate() {
+  const app = wailsApp()
+  if (app && app.CheckForUpdate) {
+    return app.CheckForUpdate()
+  }
+  return {
+    currentVersion: "",
+    latestVersion: "",
+    releaseUrl: "",
+    assetName: "",
+    assetUrl: "",
+    assetSize: 0,
+    hasUpdate: false,
+    canAutoInstall: false,
+    message: "当前环境不支持更新检查",
+  }
+}
+
+export async function downloadAndInstallUpdate(info) {
+  const app = wailsApp()
+  if (app && app.DownloadAndInstallUpdate) {
+    return app.DownloadAndInstallUpdate(info || {})
+  }
+  throw new Error("当前环境不支持自动更新")
+}
+
 export async function getSystemStats() {
   const app = wailsApp()
   return app && app.GetSystemStats ? app.GetSystemStats() : { cpu: 0, memory: 0 }
@@ -195,4 +221,23 @@ export async function downloadPlaybackToFile(url, suggestedName) {
   return ""
 }
 
+export async function getTTSVoices() {
+  const app = wailsApp()
+  return app && app.GetTTSVoices ? app.GetTTSVoices() : []
+}
 
+export async function generateTTS(provider, voiceName, text, speed, volume, pitch, languageHint) {
+  const app = wailsApp()
+  if (app && app.GenerateTTS) {
+    return app.GenerateTTS(
+      String(provider || ""),
+      String(voiceName || ""),
+      String(text || ""),
+      Number(speed) || 1.0,
+      Number(volume) || 80,
+      Number(pitch) || 1.0,
+      String(languageHint || "")
+    )
+  }
+  return ""
+}

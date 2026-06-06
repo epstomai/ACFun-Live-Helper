@@ -224,6 +224,16 @@
           <button class="icon-button" :title="store.ui.theme === 'dark' ? '要有光！' : '狗眼①瞎(つд⊂)'" @click="store.toggleTheme">
             <component :is="themeIcon" :size="17" />
           </button>
+          <button
+            class="icon-button"
+            :class="{ 'update-available': updateState.hasUpdate, pending: updateState.checking || updateState.downloading }"
+            :title="updateButtonTitle"
+            :disabled="updateState.checking || updateState.downloading || updateState.installing"
+            @click="manualCheckForUpdate"
+          >
+            <Download v-if="updateState.hasUpdate || updateState.downloading || updateState.installing" :size="17" />
+            <RefreshCw v-else :size="17" />
+          </button>
           <div v-if="store.isLoggedIn" class="profile-chip" @click="store.activeTab = 'account'">
             <div class="avatar avatar-sm">
               <img v-if="store.userProfile.avatar" :src="store.userProfile.avatar" :alt="store.userName" />
@@ -799,6 +809,10 @@
               <span>OBS 密码</span>
               <input v-model="store.obs.password" type="password" @change="store.persist" />
             </label>
+            <label>
+              <span>弹幕浏览器源</span>
+              <input v-model="store.obs.browserSourceName" placeholder="OBS 来源名称" @change="store.persist" />
+            </label>
           </div>
           <div class="toggle-row">
             <label class="checkbox-label">
@@ -809,6 +823,10 @@
               <input v-model="store.obs.stopStreamingAfterClose" type="checkbox" @change="store.persist" />
               <span>关播时停 OBS</span>
             </label>
+            <label class="checkbox-label">
+              <input v-model="store.obs.syncBrowserSourceOnConnect" type="checkbox" @change="store.persist" />
+              <span>连接后同步弹幕源 URL</span>
+            </label>
           </div>
           <div class="button-row compact-buttons">
             <button class="command" @click="run(() => store.testObsConnection(), 'OBS 已连接，推流码已同步')">
@@ -816,6 +834,9 @@
             </button>
             <button v-if="store.obs.connected" class="command" @click="run(() => store.disconnectObs(), 'OBS 已断开')">
               <Unplug :size="16" /><span>断开</span>
+            </button>
+            <button class="command" @click="run(() => store.syncObsBrowserSourceUrl({ force: true }), '已同步弹幕源 URL')">
+              <MonitorPlay :size="16" /><span>同步弹幕源</span>
             </button>
             <button class="command" :disabled="!store.obs.connected" @click="run(() => store.pushObsStreamSettings(), '已同步推流码')">
               <KeyRound :size="16" /><span>同步推流码</span>
@@ -867,7 +888,101 @@
               <button class="command" @click="run(() => store.loadRoom())"><RefreshCw :size="16" /><span>刷新</span></button>
               <button class="command" @click="run(() => store.startDanmu({ restart: true }))"><Radio :size="16" /><span>重连</span></button>
               <button class="command" @click="store.room.danmakuList = []"><Trash2 :size="16" /><span>清空</span></button>
+              <button class="command" :class="{ primary: store.tts.enabled }" @click="toggleTts" title="弹幕朗读开关">
+                <Volume2 :size="16" /><span>{{ store.tts.enabled ? "朗读中" : "朗读" }}</span>
+              </button>
+              <button class="command" :class="{ active: showTtsSettings }" @click="showTtsSettings = !showTtsSettings">
+                <Settings :size="16" /><span>设置</span>
+              </button>
             </div>
+
+            <Transition name="fade-slide">
+              <div v-if="showTtsSettings" class="tts-settings-panel">
+                <div class="form-grid cols-2">
+                  <label>
+                    <span>朗读引擎</span>
+                    <PlainSelect
+                      v-model="store.tts.provider"
+                      :options="ttsProviderOptions"
+                      @change="onTtsProviderChange"
+                    />
+                  </label>
+                  <label>
+                    <span>发音人</span>
+                    <PlainSelect
+                      v-model="store.tts.voiceName"
+                      :options="ttsVoiceOptions"
+                      placeholder="无可用声音"
+                      @change="persistTtsSettings"
+                    />
+                  </label>
+                  <label>
+                    <span>语速</span>
+                    <div class="tts-scale-control">
+                      <div class="tts-range-shell" :style="ttsRangeFill(store.tts.speed, 0.5, 2)">
+                        <input v-model.number="store.tts.speed" type="range" min="0.5" max="2.0" step="0.1" @change="persistTtsSettings" />
+                      </div>
+                      <span class="value-display">{{ Number(store.tts.speed || 1).toFixed(1) }}x</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span>音量</span>
+                    <div class="tts-scale-control">
+                      <div class="tts-range-shell" :style="ttsRangeFill(store.tts.volume, 0, 100)">
+                        <input v-model.number="store.tts.volume" type="range" min="0" max="100" step="5" @change="persistTtsSettings" />
+                      </div>
+                      <span class="value-display">{{ store.tts.volume }}%</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span>最长朗读</span>
+                    <div class="tts-scale-control">
+                      <div class="tts-range-shell" :style="ttsRangeFill(store.tts.maxLength, 10, 200)">
+                        <input v-model.number="store.tts.maxLength" type="range" min="10" max="200" step="5" @change="persistTtsSettings" />
+                      </div>
+                      <span class="value-display">{{ store.tts.maxLength }}字</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span>队列上限</span>
+                    <div class="tts-scale-control">
+                      <div class="tts-range-shell" :style="ttsRangeFill(store.tts.queueLimit, 1, 30)">
+                        <input v-model.number="store.tts.queueLimit" type="range" min="1" max="30" step="1" @change="persistTtsSettings" />
+                      </div>
+                      <span class="value-display">{{ store.tts.queueLimit }}条</span>
+                    </div>
+                  </label>
+                </div>
+                <div class="toggle-row">
+                  <label class="checkbox-label">
+                    <input v-model="store.tts.includeNickname" type="checkbox" @change="persistTtsSettings" />
+                    <span>读昵称 (XXX说)</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input v-model="store.tts.readComment" type="checkbox" @change="persistTtsSettings" />
+                    <span>读普通弹幕</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input v-model="store.tts.readGift" type="checkbox" @change="persistTtsSettings" />
+                    <span>读礼物/香蕉</span>
+                  </label>
+                </div>
+                <p class="tts-hint">Edge TTS 需要联网；生成失败时会自动改用 Windows SAPI。</p>
+                <div class="test-input-row">
+                  <input v-model="ttsTestText" placeholder="输入测试文本（如: 谢谢大伙的香蕉！）" />
+                  <button class="command" @click="loadTTSVoices" title="刷新系统语音列表">
+                    <RefreshCw :size="14" /><span>刷新语音</span>
+                  </button>
+                  <button class="command" @click="testTts" :disabled="testTtsBusy">
+                    <Play :size="14" /><span>{{ testTtsBusy ? "生成中..." : "测试语音" }}</span>
+                  </button>
+                  <button class="command danger" @click="stopTts">
+                    <Square :size="14" /><span>停止</span>
+                  </button>
+                </div>
+              </div>
+            </Transition>
+
           </div>
         </div>
 
@@ -979,6 +1094,7 @@
             <div class="inline-input">
               <input :value="danmakuOverlayUrl" readonly />
               <button class="icon-button" title="复制" @click="copy(danmakuOverlayUrl)"><Clipboard :size="16" /></button>
+              <button class="icon-button" title="同步到 OBS" @click="run(() => store.syncObsBrowserSourceUrl({ force: true }), '已同步到 OBS 浏览器源')"><MonitorPlay :size="16" /></button>
             </div>
           </label>
           <div class="overlay-section-row">
@@ -1056,11 +1172,11 @@
               </div>
               <div class="overlay-control-grid">
                 <label><span>简繁转换</span>
-                  <select v-model="store.overlay.convertChinese" @change="store.persist">
-                    <option value="none">不转换</option>
-                    <option value="s2t">转繁体</option>
-                    <option value="t2s">转简体</option>
-                  </select>
+                  <PlainSelect
+                    v-model="store.overlay.convertChinese"
+                    :options="convertChineseOptions"
+                    @change="store.persist"
+                  />
                 </label>
               </div>
             </section>
@@ -1457,9 +1573,12 @@ import {
   Layers,
   MessageSquare,
   SlidersHorizontal,
+  Volume2,
+  Settings,
 } from "@lucide/vue"
 import { useLiveStore } from "@/stores/liveStore"
 import HsvColorPicker from "@/components/HsvColorPicker.vue"
+import PlainSelect from "@/components/PlainSelect.vue"
 import SearchableSelect from "@/components/SearchableSelect.vue"
 import { previewPool, aIslandEmotes } from "@/assets/previewData.js"
 import {
@@ -1468,6 +1587,8 @@ import {
   getLogPath,
   getOverlayBaseUrl,
   broadcastOverlayStyle,
+  checkForUpdate,
+  downloadAndInstallUpdate,
   downloadPlaybackToFile,
   getSystemFonts,
   openCoverFile,
@@ -1488,7 +1609,10 @@ import {
   setMouseClickThrough,
   setMouseClickThroughHotkey,
   onClickThroughToggle,
+  getTTSVoices,
 } from "@/services/nativeBridge"
+import { ttsService } from "@/services/ttsService"
+
 
 const store = useLiveStore()
 
@@ -1533,6 +1657,16 @@ const isAlwaysOnTop = ref(true)
 const isMiniWindowProcess = ref(false)
 const isDraggingWindow = ref(false)
 const floatDanmuStarted = ref(false)
+const updateState = reactive({
+  checking: false,
+  downloading: false,
+  installing: false,
+  hasUpdate: false,
+  latestVersion: "",
+  message: "",
+  releaseUrl: "",
+  lastCheckedAt: 0,
+})
 
 watch(floatOpacity, (value) => {
   const opacity = Number.isFinite(Number(value)) ? Math.min(100, Math.max(0, Number(value))) : 72
@@ -2458,6 +2592,9 @@ watch(() => store.overlay, () => {
   window.clearTimeout(overlayBroadcastTimer)
   overlayBroadcastTimer = window.setTimeout(pushOverlayStyle, 80)
 }, { deep: true, immediate: true })
+watch(danmakuOverlayUrl, (url) => {
+  store.setObsBrowserSourceUrl(url)
+}, { immediate: true })
 watch(() => store.ui.uiScale, (value) => {
   uiScalePercent.value = Math.round((Number(value) || 1) * 100)
 }, { immediate: true })
@@ -2620,6 +2757,22 @@ const qrExpireText = computed(() => {
   return `二维码有效期至 ${new Date(store.qrLogin.expireTime).toLocaleTimeString()}`
 })
 
+const updateButtonTitle = computed(() => {
+  if (updateState.installing) {
+    return "正在启动更新"
+  }
+  if (updateState.downloading) {
+    return "正在下载更新"
+  }
+  if (updateState.checking) {
+    return "正在检查更新"
+  }
+  if (updateState.hasUpdate) {
+    return `发现新版本 ${updateState.latestVersion}，点击重新检查`
+  }
+  return updateState.message || "检查 GitHub 更新"
+})
+
 let refreshTimer = 0
 let tickerTimer = 0
 let diagnosticTimer = 0
@@ -2633,7 +2786,84 @@ watch(() => store.ui.theme, (theme) => {
   }
 })
 
+// === 弹幕 TTS 语音朗读控制 ===
+const showTtsSettings = ref(false)
+const systemVoices = ref([])
+const testTtsBusy = ref(false)
+const ttsTestText = ref("你好，这只是一条弹幕语音测试，欢迎使用！")
+const convertChineseOptions = [
+  { value: "none", label: "不转换" },
+  { value: "s2t", label: "转繁体" },
+  { value: "t2s", label: "转简体" },
+]
+const ttsProviderOptions = [
+  { value: "edge", label: "Edge TTS (高清网络)" },
+  { value: "sapi", label: "Windows SAPI (本地保底)" },
+]
+
+const loadTTSVoices = async () => {
+  try {
+    const list = await getTTSVoices()
+    systemVoices.value = list
+  } catch (e) {
+    console.error("[TTS] 加载TTS语音包失败:", e)
+  }
+}
+
+const filteredVoices = computed(() => {
+  return systemVoices.value.filter(v => v.provider === store.tts.provider)
+})
+
+const ttsVoiceOptions = computed(() => filteredVoices.value.map((voice) => ({
+  value: voice.name,
+  label: `${voice.displayName} (${voice.lang})`,
+})))
+
+const ttsRangeFill = (value, min, max) => {
+  const raw = Number(value)
+  const safe = Number.isFinite(raw) ? raw : min
+  const percent = Math.min(100, Math.max(0, ((safe - min) / (max - min)) * 100))
+  return { "--tts-range-fill": `${percent}%` }
+}
+
+const persistTtsSettings = () => {
+  store.persist()
+}
+
+const onTtsProviderChange = () => {
+  store.persist()
+  const list = filteredVoices.value
+  if (list.length > 0) {
+    // 自动切换到该引擎下的第一个发音人
+    store.tts.voiceName = list[0].name
+    store.persist()
+  }
+}
+
+const toggleTts = () => {
+  store.tts.enabled = !store.tts.enabled
+  store.persist()
+  if (!store.tts.enabled) {
+    ttsService.stop()
+  }
+}
+
+const testTts = async () => {
+  if (testTtsBusy.value) return
+  testTtsBusy.value = true
+  try {
+    await ttsService.test(store.tts, ttsTestText.value)
+  } finally {
+    testTtsBusy.value = false
+  }
+}
+
+const stopTts = () => {
+  ttsService.stop()
+}
+
 onMounted(async () => {
+  loadTTSVoices().catch(() => {})
   updateExtremeNarrowSidebar()
   window.addEventListener("resize", updateExtremeNarrowSidebar)
   window.addEventListener("wheel", handleFloatWheel, { passive: false })
@@ -2696,6 +2926,7 @@ onMounted(async () => {
     setSharedTheme(store.ui.theme).catch(() => {})
     await publishFloatRuntimeState()
     floatRuntimeTimer = window.setInterval(publishFloatRuntimeState, 1000)
+    autoCheckForUpdate({ silent: true }).catch(() => {})
   }
 })
 
@@ -2811,6 +3042,53 @@ function showToast(message) {
       toast.value = ""
     }
   }, 3200)
+}
+
+async function autoCheckForUpdate({ silent = true } = {}) {
+  if (isMiniWindowProcess.value || updateState.checking || updateState.downloading || updateState.installing) {
+    return
+  }
+  updateState.checking = true
+  updateState.message = silent ? "正在后台检查更新" : "正在检查更新"
+  try {
+    const info = await checkForUpdate()
+    updateState.lastCheckedAt = Date.now()
+    updateState.hasUpdate = Boolean(info?.hasUpdate)
+    updateState.latestVersion = info?.latestVersion || ""
+    updateState.releaseUrl = info?.releaseUrl || ""
+    updateState.message = info?.message || (updateState.hasUpdate ? "发现新版本" : "当前已是最新版本")
+    if (!silent || updateState.hasUpdate) {
+      showToast(updateState.message)
+    }
+    if (info?.hasUpdate && info?.canAutoInstall) {
+      updateState.downloading = true
+      updateState.message = `正在下载 ${info.latestVersion || "新版本"}`
+      showToast(updateState.message)
+      const result = await downloadAndInstallUpdate(info)
+      updateState.installing = Boolean(result?.willRestart)
+      updateState.message = result?.message || "更新已下载，正在重启"
+      showToast(updateState.message)
+    } else if (info?.hasUpdate && !info?.canAutoInstall) {
+      showToast(info.message || "发现新版本，但无法自动安装")
+      if (!silent && info.releaseUrl) {
+        await openExternalURL(info.releaseUrl)
+      }
+    }
+  } catch (error) {
+    const message = error?.message || String(error)
+    updateState.message = `更新检查失败：${message}`
+    store.log(updateState.message)
+    if (!silent) {
+      showToast(updateState.message)
+    }
+  } finally {
+    updateState.checking = false
+    updateState.downloading = false
+  }
+}
+
+function manualCheckForUpdate() {
+  autoCheckForUpdate({ silent: false })
 }
 
 function refreshCurrent() {

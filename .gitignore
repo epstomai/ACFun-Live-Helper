@@ -8,7 +8,11 @@ dist-ssr/
 coverage/
 /Snipaste_*
 .external/
-
+icon-png-sizes-imagegen-livebadge/
+.antigravity
+QQ截图*
+.claude
+.codegraph
 
 # local env files
 .env
@@ -36,6 +40,7 @@ lerna-debug.log*
 
 # Wails build artifacts
 /build/bin
+/build/windows/installer/tmp/
 
 *.exe
 *.exe~

@@ -29,13 +29,13 @@ const (
 	wsExLayered     = 0x00080000
 	wsExTransparent = 0x00000020
 
-	wmHotkey            = 0x0312
-	wmQuit              = 0x0012
-	wmUserUpdateHotkey  = 0x0400 + 1 // WM_USER + 1: 通知 hotkey 线程重新注册
-	modAlt              = 0x0001
-	modCtrl             = 0x0002
-	modShift            = 0x0004
-	modNoRepeat         = 0x4000
+	wmHotkey           = 0x0312
+	wmQuit             = 0x0012
+	wmUserUpdateHotkey = 0x0400 + 1 // WM_USER + 1: 通知 hotkey 线程重新注册
+	modAlt             = 0x0001
+	modCtrl            = 0x0002
+	modShift           = 0x0004
+	modNoRepeat        = 0x4000
 
 	vkG = 0x47 // 'G'，默认 Ctrl+Alt+Shift+G
 )
@@ -52,7 +52,7 @@ var (
 	procGetMessageW              = user32.NewProc("GetMessageW")
 	procPostThreadMessageW       = user32.NewProc("PostThreadMessageW")
 
-	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
+	kernel32               = windows.NewLazySystemDLL("kernel32.dll")
 	procGetCurrentThreadId = kernel32.NewProc("GetCurrentThreadId")
 
 	hotkeyMu       sync.Mutex

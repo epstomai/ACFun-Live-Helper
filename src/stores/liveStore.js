@@ -11,6 +11,8 @@ import {
 } from "@/services/acfunBackend"
 import { ObsWebSocketClient } from "@/services/obsWebSocket"
 import { appendLog as appendNativeLog, readCoverFile, saveCoverImage } from "@/services/nativeBridge"
+import { ttsService } from "@/services/ttsService"
+
 
 const STORAGE_KEY = "aclivehelper.state.v1"
 let obsClient = null
@@ -18,6 +20,8 @@ let obsClientKey = ""
 let obsClientUnsubscribers = []
 let obsObservedStreaming = false
 let obsPreserveRestoreOnClose = false
+let liveTimelineSampler = null
+const LIVE_TIMELINE_SAMPLE_INTERVAL_MS = 60000
 
 function loadSavedState() {
   try {
@@ -55,6 +59,46 @@ function parseCount(...values) {
 
 function formatError(error) {
   return error && error.message ? error.message : String(error)
+}
+
+const AUTH_EXPIRED_MESSAGE = "登录已过期，请重新登录"
+
+function errorSignalText(error) {
+  const parts = [formatError(error)]
+  if (error && typeof error === "object") {
+    parts.push(error.error, error.result)
+    if (error.response && typeof error.response === "object") {
+      parts.push(error.response.error, error.response.result)
+    }
+    if (error.data && typeof error.data === "object") {
+      parts.push(error.data.error, error.data.result)
+    }
+  }
+  return parts
+    .filter((part) => part !== undefined && part !== null && part !== "")
+    .map((part) => String(part))
+    .join(" ")
+}
+
+function isAuthExpiredError(error) {
+  const text = errorSignalText(error)
+  return /(?:^|\D)100(?:04|25|26|27|28)(?:\D|$)|token过期|INVALID_TOKEN|TOKEN_EXPIRED|PASSWORD_CHANGED|LOGIN_ON_OTHER_DEVICE|登录.*(?:过期|失效|无效)|(?:请|需要).*登录|用户未登录|未登录/i.test(text)
+}
+
+function isBackendNeedsLoginError(error) {
+  return /Need login(?: or token)?|需要登录|未登录/i.test(errorSignalText(error))
+}
+
+function canRetryWithSavedToken(type) {
+  return ![
+    BackendTypes.HEARTBEAT,
+    BackendTypes.LOGIN,
+    BackendTypes.SET_TOKEN,
+    BackendTypes.QR_CODE_LOGIN,
+    BackendTypes.QR_CODE_SCANNED,
+    BackendTypes.QR_CODE_LOGIN_CANCEL,
+    BackendTypes.QR_CODE_LOGIN_SUCCESS,
+  ].includes(type)
 }
 
 function normalizeUserProfile(info = {}, fallbackId = "") {
@@ -105,6 +149,42 @@ function summaryRecord(summary, live = {}) {
     diamond: summary.diamond || 0,
     gift: summary.gift || 0,
     banana: summary.banana || 0,
+    timeline: Array.isArray(summary.timeline) ? summary.timeline : [],
+  }
+}
+
+function emptyLiveSummary() {
+  return {
+    liveId: "",
+    endReason: "",
+    endedAt: "",
+    diamond: 0,
+    gift: 0,
+    banana: 0,
+    watchCount: 0,
+    likeCount: 0,
+    danmakuCount: 0,
+    duration: "00:00:00",
+    timeline: [],
+  }
+}
+
+function normalizeLiveSummary(summary = {}) {
+  const base = emptyLiveSummary()
+  if (!summary || typeof summary !== "object") {
+    return base
+  }
+  return {
+    liveId: String(summary.liveId || ""),
+    endReason: String(summary.endReason || ""),
+    endedAt: String(summary.endedAt || ""),
+    diamond: Number(summary.diamond || 0),
+    gift: Number(summary.gift || 0),
+    banana: Number(summary.banana || 0),
+    watchCount: Number(summary.watchCount || 0),
+    likeCount: Number(summary.likeCount || 0),
+    danmakuCount: Number(summary.danmakuCount || 0),
+    duration: summary.duration || base.duration,
     timeline: Array.isArray(summary.timeline) ? summary.timeline : [],
   }
 }
@@ -288,6 +368,23 @@ function isNotLiveError(error) {
   return /未开播|已关播|380023|129004/i.test(formatError(error))
 }
 
+function normalizeTtsSettings(raw = {}) {
+  const provider = raw.provider === "sapi" ? "sapi" : "edge"
+  return {
+    enabled: Boolean(raw.enabled),
+    provider,
+    voiceName: raw.voiceName || (provider === "sapi" ? "" : "zh-CN-XiaoxiaoNeural"),
+    volume: Math.min(100, Math.max(0, Number(raw.volume ?? 80) || 80)),
+    speed: Math.min(2, Math.max(0.5, Number(raw.speed ?? 1) || 1)),
+    pitch: Math.min(2, Math.max(0.5, Number(raw.pitch ?? 1) || 1)),
+    includeNickname: raw.includeNickname !== false,
+    readComment: raw.readComment !== false,
+    readGift: Boolean(raw.readGift),
+    maxLength: Math.min(200, Math.max(10, Number(raw.maxLength ?? 50) || 50)),
+    queueLimit: Math.min(30, Math.max(1, Number(raw.queueLimit ?? 5) || 5)),
+  }
+}
+
 function defaultState() {
   const saved = loadSavedState()
   const savedOverlay = saved.overlay || {}
@@ -301,6 +398,7 @@ function defaultState() {
   const savedLiveHistory = currentUid && Array.isArray(liveHistoryByUser[currentUid])
     ? liveHistoryByUser[currentUid]
     : []
+  const savedSummary = normalizeLiveSummary(saved.liveSummary)
   return {
     backendUrl: saved.backendUrl || "ws://localhost:15368/",
     connected: false,
@@ -351,6 +449,11 @@ function defaultState() {
       enabled: savedObs.enabled || false,
       url: savedObs.url || "ws://127.0.0.1:4455",
       password: savedObs.password || "",
+      browserSourceName: savedObs.browserSourceName || "",
+      syncBrowserSourceOnConnect: savedObs.syncBrowserSourceOnConnect !== false,
+      browserSourceUrl: "",
+      lastBrowserSourceSyncedSourceName: "",
+      lastBrowserSourceSyncedUrl: "",
       connected: false,
       streaming: false,
       shouldRestoreConnection: savedObs.shouldRestoreConnection || false,
@@ -360,19 +463,7 @@ function defaultState() {
       autoStartStatus: "idle",
       lastError: "",
     },
-    summary: {
-      liveId: "",
-      endReason: "",
-      endedAt: "",
-      diamond: 0,
-      gift: 0,
-      banana: 0,
-      watchCount: 0,
-      likeCount: 0,
-      danmakuCount: 0,
-      duration: "00:00:00",
-      timeline: [],
-    },
+    summary: liveTimerByUser[currentUid]?.startedAt ? savedSummary : emptyLiveSummary(),
     // 当前登录用户的直播历史视图。真正的多账号存档在 liveHistoryByUser 里，
     // persist() 会把 liveHistory 同步写回 liveHistoryByUser[当前 userId]。
     liveHistory: savedLiveHistory.slice(0, 100),
@@ -409,6 +500,7 @@ function defaultState() {
       uiScale: Math.min(1.3, Math.max(0.8, Number(savedUi.uiScale) || 1)),
       guardianClubVisible: savedUi.guardianClubVisible !== false,
     },
+    tts: normalizeTtsSettings(saved.tts),
     qrLogin: {
       status: "idle",
       imageData: "",
@@ -482,16 +574,20 @@ export const useLiveStore = defineStore("live", {
         liveHistoryByUser: byUserSnapshot,
         liveDailyStatsByUser,
         liveTimerByUser,
+        liveSummary: this.live.isLive || this.room.isLive ? normalizeLiveSummary(this.summary) : emptyLiveSummary(),
         overlay: this.overlay,
         obs: {
           enabled: this.obs.enabled,
           url: this.obs.url,
           password: this.obs.password,
+          browserSourceName: this.obs.browserSourceName,
+          syncBrowserSourceOnConnect: this.obs.syncBrowserSourceOnConnect,
           shouldRestoreConnection: this.obs.shouldRestoreConnection,
           autoStartLive: this.obs.autoStartLive,
           stopStreamingAfterClose: this.obs.stopStreamingAfterClose,
         },
         ui: this.ui,
+        tts: this.tts,
       }))
     },
     setTheme(theme) {
@@ -534,12 +630,57 @@ export const useLiveStore = defineStore("live", {
         [uid]: normalizeLiveHistoryRecords(this.liveHistory),
       }
     },
+    ensureLiveSummary(liveId) {
+      const liveIdText = String(liveId || this.live.liveId || this.room.liveId || this.summary.liveId || "")
+      if (!liveIdText) {
+        return
+      }
+      if (this.summary.liveId !== liveIdText) {
+        this.summary.liveId = liveIdText
+        this.summary.endReason = ""
+        this.summary.endedAt = ""
+        this.summary.duration = "00:00:00"
+        this.summary.timeline = []
+      }
+      if (!Array.isArray(this.summary.timeline)) {
+        this.summary.timeline = []
+      }
+    },
+    startLiveTimelineSampler() {
+      if (liveTimelineSampler) {
+        return
+      }
+      liveTimelineSampler = window.setInterval(() => {
+        if (!this.live.isLive && !this.room.isLive) {
+          this.stopLiveTimelineSampler()
+          return
+        }
+        this.loadRoom()
+          .catch((error) => {
+            this.log(`直播曲线采样失败：${formatError(error)}`)
+          })
+          .finally(() => {
+            this.pushLiveTimelinePoint()
+            this.syncLiveTimelineToHistory()
+            this.persist()
+          })
+      }, LIVE_TIMELINE_SAMPLE_INTERVAL_MS)
+    },
+    stopLiveTimelineSampler() {
+      if (!liveTimelineSampler) {
+        return
+      }
+      window.clearInterval(liveTimelineSampler)
+      liveTimelineSampler = null
+    },
     startLiveTimer(liveId, timestamp = Date.now()) {
       const uid = String(this.userId || "")
       if (!uid) {
         return
       }
       const liveIdText = String(liveId || "")
+      this.ensureLiveSummary(liveIdText)
+      this.startLiveTimelineSampler()
       const old = this.liveTimerByUser[uid]
       if (old?.startedAt && (!old.liveId || old.liveId === liveIdText)) {
         const startedAt = Math.floor(Number(old.startedAt) || timestamp)
@@ -566,6 +707,7 @@ export const useLiveStore = defineStore("live", {
           lastSeenAt: timestamp,
         },
       }
+      this.pushLiveTimelinePoint(true)
     },
     markLiveTimerSeen(liveId, timestamp = Date.now()) {
       const uid = String(this.userId || "")
@@ -573,6 +715,8 @@ export const useLiveStore = defineStore("live", {
         return
       }
       const liveIdText = String(liveId || "")
+      this.ensureLiveSummary(liveIdText)
+      this.startLiveTimelineSampler()
       const old = this.liveTimerByUser[uid]
       if (!old?.startedAt) {
         this.startLiveTimer(liveIdText, timestamp)
@@ -612,6 +756,7 @@ export const useLiveStore = defineStore("live", {
       this.liveTimerByUser = nextTimers
       this.room.liveStartTime = 0
       this.room.accumulatedTime = 0
+      this.stopLiveTimelineSampler()
     },
     log(message) {
       const text = String(message || "")
@@ -633,6 +778,20 @@ export const useLiveStore = defineStore("live", {
         ...this.liveHistory.filter((item) => item.liveId !== record.liveId),
       ].slice(0, 100)
       this.persist()
+    },
+    syncLiveTimelineToHistory() {
+      const liveId = this.summary.liveId
+      if (!liveId) {
+        return
+      }
+      const index = this.liveHistory.findIndex((item) => item.liveId === liveId)
+      if (index < 0) {
+        return
+      }
+      const timeline = Array.isArray(this.summary.timeline) ? this.summary.timeline : []
+      this.liveHistory = this.liveHistory.map((item, itemIndex) => (
+        itemIndex === index ? { ...item, timeline } : item
+      ))
     },
     pushLiveTimelinePoint(force = false) {
       if (!this.live.isLive && !this.room.isLive && !this.summary.liveId) {
@@ -685,14 +844,42 @@ export const useLiveStore = defineStore("live", {
     },
     async request(type, data, options) {
       await this.connect()
-      return acfunBackend.request(type, data, options)
+      try {
+        return await acfunBackend.request(type, data, options)
+      } catch (error) {
+        if (isAuthExpiredError(error)) {
+          this.handleAuthExpired("登录状态")
+          throw new Error(AUTH_EXPIRED_MESSAGE)
+        }
+        if (this.tokenInfo && canRetryWithSavedToken(type) && isBackendNeedsLoginError(error)) {
+          try {
+            await this.ensureBackendToken()
+            return await acfunBackend.request(type, data, options)
+          } catch (retryError) {
+            if (isAuthExpiredError(retryError)) {
+              this.handleAuthExpired("登录状态")
+              throw new Error(AUTH_EXPIRED_MESSAGE)
+            }
+            throw retryError
+          }
+        }
+        throw error
+      }
     },
     async ensureBackendToken() {
       if (!this.tokenInfo) {
         return
       }
       await this.connect()
-      await acfunBackend.setToken(this.tokenInfo)
+      try {
+        await acfunBackend.setToken(this.tokenInfo)
+      } catch (error) {
+        if (isAuthExpiredError(error)) {
+          this.handleAuthExpired("恢复登录")
+          throw new Error(AUTH_EXPIRED_MESSAGE)
+        }
+        throw error
+      }
     },
     async restoreSession() {
       if (!this.tokenInfo) {
@@ -712,6 +899,10 @@ export const useLiveStore = defineStore("live", {
         await this.loadStartupLiveData()
         await this.startDanmu()
       } catch (error) {
+        if (isAuthExpiredError(error)) {
+          this.lastError = AUTH_EXPIRED_MESSAGE
+          return
+        }
         this.lastError = formatError(error)
         this.log(`恢复登录失败：${this.lastError}`)
       }
@@ -767,8 +958,8 @@ export const useLiveStore = defineStore("live", {
         throw error
       }
     },
-    logout() {
-      this.finishLiveTimer(Date.now(), !(this.live.isLive || this.room.isLive))
+    clearAccountSession({ closeBackend = true } = {}) {
+      this.stopLiveTimelineSampler()
       this.saveHistoryForCurrentUser()
       this.tokenInfo = null
       this.userName = ""
@@ -792,8 +983,33 @@ export const useLiveStore = defineStore("live", {
       this.room.todayFansAdded = 0
       this.room.liveStartTime = 0
       this.room.accumulatedTime = 0
-      acfunBackend.close()
+      this.live.isLive = false
+      this.live.liveId = ""
+      this.live.streamName = ""
+      this.live.streamUrl = ""
+      this.live.streamKey = ""
+      this.live.transcodes = []
+      this.live.liveCutInfo = { status: false, url: "", redirectURL: "" }
+      if (closeBackend) {
+        acfunBackend.close()
+      }
+      ttsService.stop()
       this.persist()
+    },
+    logout() {
+      this.finishLiveTimer(Date.now(), !(this.live.isLive || this.room.isLive))
+      this.clearAccountSession()
+    },
+    handleAuthExpired(context = "登录状态") {
+      const hadSession = Boolean(this.tokenInfo || this.userId)
+      if (!hadSession) {
+        this.lastError = AUTH_EXPIRED_MESSAGE
+        return
+      }
+      this.finishLiveTimer(Date.now(), true)
+      this.clearAccountSession()
+      this.lastError = AUTH_EXPIRED_MESSAGE
+      this.log(`${context}：${AUTH_EXPIRED_MESSAGE}`)
     },
     async refreshUser() {
       if (!this.userId) {
@@ -811,7 +1027,10 @@ export const useLiveStore = defineStore("live", {
           this.live.isLive = true
           this.markLiveTimerSeen(profile.liveId)
         }
-      } catch {
+      } catch (error) {
+        if (isAuthExpiredError(error)) {
+          throw error
+        }
         this.userName = `UID ${this.userId}`
         this.userProfile = normalizeUserProfile({ nickname: this.userName }, this.userId)
       }
@@ -835,6 +1054,9 @@ export const useLiveStore = defineStore("live", {
         try {
           await job.run()
         } catch (error) {
+          if (isAuthExpiredError(error)) {
+            return
+          }
           this.log(`${job.name}加载失败：${formatError(error)}`)
         }
       }
@@ -881,6 +1103,9 @@ export const useLiveStore = defineStore("live", {
         }
       } catch (error) {
         const message = formatError(error)
+        if (isAuthExpiredError(error) || message === AUTH_EXPIRED_MESSAGE) {
+          return
+        }
         // "直播已关播 / 主播未开播" 是预期未开播态，不污染用户日志，仅写控制台。
         const isOffline = /已关播|未开播|129004|380023/.test(message)
         if (isOffline) {
@@ -953,15 +1178,27 @@ export const useLiveStore = defineStore("live", {
         }
       }
       if (message.type === BackendDanmuTypes.DANMU_STOP_ERROR) {
-        this.log(`弹幕错误：${message.data?.error || "未知错误"}`)
+        const errorMessage = message.data?.error || "未知错误"
+        if (isAuthExpiredError(message)) {
+          this.handleAuthExpired("弹幕连接")
+          return
+        }
+        this.log(`弹幕错误：${errorMessage}`)
       }
 
       const list = mapBackendDanmuMessage(message)
+      const isRecent = message.type === BackendDanmuTypes.RECENT_COMMENT
       let newDanmakuCount = 0
       list.forEach((item) => {
         if (!this.isDuplicateDanmaku(item)) {
           this.room.danmakuList.unshift(item)
           newDanmakuCount += 1
+          if (!isRecent && this.tts.enabled) {
+            ttsService.speakDanmaku(item, this.tts, {
+              sourceType: message.type,
+              blockList: this.room.blockList,
+            })
+          }
         }
       })
       this.room.danmakuList = this.room.danmakuList.slice(0, 300)
@@ -1005,6 +1242,7 @@ export const useLiveStore = defineStore("live", {
           this.live.liveId = info.liveID
           this.live.isLive = true
           this.markLiveTimerSeen(info.liveID)
+          this.pushLiveTimelinePoint()
           this.persist()
           await this.loadWatchingList()
         } else {
@@ -1243,6 +1481,7 @@ export const useLiveStore = defineStore("live", {
         this.live.streamName = status.streamName || this.live.streamName
         if (liveId) {
           this.markLiveTimerSeen(liveId)
+          this.pushLiveTimelinePoint()
           this.persist()
           this.loadLiveCutInfo().catch(() => {})
           this.loadLiveCutStatus().catch(() => {})
@@ -1553,8 +1792,9 @@ export const useLiveStore = defineStore("live", {
       ]
       return obsClient
     },
-    async connectObsClient() {
+    async connectObsClient({ syncBrowserSource = true } = {}) {
       const client = this.getObsClient()
+      const shouldSyncBrowserSource = syncBrowserSource && !client.isConnected()
       await client.connect()
       this.obs.connected = true
       this.obs.enabled = true
@@ -1562,7 +1802,78 @@ export const useLiveStore = defineStore("live", {
       this.obs.lastError = ""
       this.obs.url = normalizeObsUrl(this.obs.url)
       this.persist()
+      if (shouldSyncBrowserSource && this.obs.syncBrowserSourceOnConnect) {
+        await this.syncObsBrowserSourceUrl({ client, force: true, required: false, silent: true })
+      }
       return client
+    },
+    setObsBrowserSourceUrl(url) {
+      this.obs.browserSourceUrl = String(url || "").trim()
+    },
+    async syncObsBrowserSourceUrl({
+      client = null,
+      force = false,
+      required = true,
+      silent = false,
+    } = {}) {
+      if (!this.obs.syncBrowserSourceOnConnect && !force) {
+        return false
+      }
+
+      const inputName = String(this.obs.browserSourceName || "").trim()
+      const url = String(this.obs.browserSourceUrl || "").trim()
+      if (!inputName) {
+        if (required && !silent) {
+          throw new Error("请先填写 OBS 浏览器源名称")
+        }
+        return false
+      }
+      if (!url) {
+        if (required && !silent) {
+          throw new Error("浏览器来源 URL 尚未初始化")
+        }
+        return false
+      }
+      if (!client && !this.obs.connected) {
+        throw new Error("请先连接 OBS")
+      }
+
+      if (
+        !force
+        && this.obs.lastBrowserSourceSyncedSourceName === inputName
+        && this.obs.lastBrowserSourceSyncedUrl === url
+      ) {
+        return false
+      }
+
+      try {
+        const obs = client || await this.connectObsClient({ syncBrowserSource: false })
+        await obs.request("SetInputSettings", {
+          inputName,
+          inputSettings: { url },
+          overlay: true,
+        })
+        await obs.request("PressInputPropertiesButton", {
+          inputName,
+          propertyName: "refreshnocache",
+        })
+        this.obs.connected = true
+        this.obs.enabled = true
+        this.obs.lastError = ""
+        this.obs.lastBrowserSourceSyncedSourceName = inputName
+        this.obs.lastBrowserSourceSyncedUrl = url
+        this.persist()
+        this.log(`已同步并刷新 OBS 浏览器源：${inputName}`)
+        return true
+      } catch (error) {
+        const message = formatError(error)
+        this.obs.lastError = message
+        this.log(`OBS 浏览器源 URL 同步或刷新失败：${message}`)
+        if (!silent) {
+          throw error
+        }
+        return false
+      }
     },
     async restoreObsConnection() {
       if (!this.obs.shouldRestoreConnection) {

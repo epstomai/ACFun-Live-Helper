@@ -3,7 +3,11 @@
 
 export function AppendLog(arg1:string):Promise<void>;
 
+export function CheckForUpdate():Promise<any>;
+
 export function CopyText(arg1:string):Promise<void>;
+
+export function DownloadAndInstallUpdate(arg1:any):Promise<any>;
 
 export function GetBackendPort():Promise<number>;
 

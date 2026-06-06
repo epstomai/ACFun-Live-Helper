@@ -6,8 +6,16 @@ export function AppendLog(arg1) {
   return window['go']['main']['App']['AppendLog'](arg1);
 }
 
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
 export function CopyText(arg1) {
   return window['go']['main']['App']['CopyText'](arg1);
+}
+
+export function DownloadAndInstallUpdate(arg1) {
+  return window['go']['main']['App']['DownloadAndInstallUpdate'](arg1);
 }
 
 export function GetBackendPort() {

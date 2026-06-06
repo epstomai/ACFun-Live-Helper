@@ -1,6 +1,6 @@
 {
   "name": "aclivehelper",
-  "version": "1.0.0-rc.3",
+  "version": "1.1.0",
   "author": "Hakura",
   "description": "A modern helper for AcFun Live with an embedded acfunlive-backend",
   "private": true,
