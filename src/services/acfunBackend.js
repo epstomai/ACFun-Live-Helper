@@ -26,6 +26,9 @@ export const BackendTypes = Object.freeze({
   GET_USER_INFO: 115,
   GET_LIVE_CUT_INFO: 116,
 
+  ADD_MOMENT: 400,
+  GET_REWARD_RECORDS: 401,
+
   GET_MANAGER_LIST: 200,
   ADD_MANAGER: 201,
   DELETE_MANAGER: 202,

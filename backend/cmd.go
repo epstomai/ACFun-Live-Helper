@@ -104,6 +104,8 @@ var cmdDispatch = map[int]func(*acLive, *fastjson.Value, string) string{
 	getLiveCutStatusType:    (*acLive).getLiveCutStatus,
 	setLiveCutStatusType:    (*acLive).setLiveCutStatus,
 	sendCommentType:         (*acLive).sendComment,
+	addMomentType:           (*acLive).addMoment,
+	getRewardRecordsType:    (*acLive).getRewardRecords,
 }
 
 // 处理登陆命令

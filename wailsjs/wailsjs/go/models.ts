@@ -1,13 +1,13 @@
 export namespace main {
-
+	
 	export class SystemStatsResult {
 	    cpu: number;
 	    memory: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SystemStatsResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cpu = source["cpu"];
@@ -19,11 +19,11 @@ export namespace main {
 	    displayName: string;
 	    lang: string;
 	    provider: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TTSVoice(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -44,11 +44,11 @@ export namespace main {
 	    hasUpdate: boolean;
 	    canAutoInstall: boolean;
 	    message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.currentVersion = source["currentVersion"];
@@ -69,11 +69,11 @@ export namespace main {
 	    version: string;
 	    message: string;
 	    willRestart: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UpdateInstallResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.downloadedPath = source["downloadedPath"];

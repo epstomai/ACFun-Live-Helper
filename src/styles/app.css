@@ -4159,6 +4159,173 @@ html.is-float-window #app {
   transform: translate(-50%, -50%) scale(0.92);
 }
 
+/* === Moment Composer (发动态) === */
+.moment-composer {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.moment-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  background: var(--bg);
+  color: inherit;
+}
+
+.moment-textarea:focus {
+  outline: none;
+  border-color: var(--brand, #fd4c5d);
+}
+
+.moment-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.moment-count {
+  font-size: 12px;
+  color: var(--muted, #999);
+}
+
+.moment-count.over {
+  color: #fd4c5d;
+}
+
+/* === Gift Stats (礼物统计) === */
+.gift-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gift-refresh-button,
+.gift-refresh-button:hover,
+.gift-refresh-button:disabled {
+  color: #fff;
+}
+
+.gift-refresh-button svg {
+  color: currentColor;
+  stroke: currentColor;
+}
+
+.gift-filter-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.gift-date-range-control {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto minmax(160px, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.gift-date-range-control > span:first-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.gift-date-range-control input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--field-bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.gift-date-separator {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.gift-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gift-preset-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gift-preset-button:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+@media (max-width: 720px) {
+  .gift-date-range-control {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .gift-date-separator {
+    text-align: center;
+  }
+}
+
+.gift-overview {
+  margin-top: 8px;
+}
+
+.gift-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.gift-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.gift-table th,
+.gift-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.gift-table th {
+  color: var(--muted, #999);
+  font-weight: 500;
+}
+
+.gift-table tbody tr:hover {
+  background: var(--surface);
+}
+
 /* === TTS Settings Panel === */
 .tts-settings-panel {
   margin-top: 12px;

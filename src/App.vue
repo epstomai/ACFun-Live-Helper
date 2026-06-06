@@ -894,7 +894,29 @@
               <button class="command" :class="{ active: showTtsSettings }" @click="showTtsSettings = !showTtsSettings">
                 <Settings :size="16" /><span>设置</span>
               </button>
+              <button class="command" :class="{ active: showMomentComposer }" @click="showMomentComposer = !showMomentComposer" title="发布动态到个人主页">
+                <Send :size="16" /><span>发动态</span>
+              </button>
             </div>
+
+            <Transition name="fade-slide">
+              <div v-if="showMomentComposer" class="moment-composer">
+                <textarea
+                  v-model="momentText"
+                  class="moment-textarea"
+                  rows="3"
+                  maxlength="233"
+                  placeholder="发布一条动态到个人主页…（1-233字）"
+                  @keyup.ctrl.enter="publishMoment"
+                ></textarea>
+                <div class="moment-composer-bar">
+                  <span class="moment-count" :class="{ over: [...momentText].length > 233 }">{{ [...momentText].length }}/233</span>
+                  <button class="command primary" :disabled="!momentText.trim()" @click="publishMoment">
+                    <Send :size="16" /><span>发布动态</span>
+                  </button>
+                </div>
+              </div>
+            </Transition>
 
             <Transition name="fade-slide">
               <div v-if="showTtsSettings" class="tts-settings-panel">
@@ -1310,6 +1332,100 @@
         </div>
       </section>
 
+      <!-- 礼物统计 -->
+      <section v-if="store.activeTab === 'gift'" class="gift-grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>礼物统计</h3>
+            <div class="row-actions">
+              <button class="command primary gift-refresh-button" :disabled="store.giftStats.loading || !store.isLoggedIn" @click="run(() => store.loadGiftStats(), '礼物统计已更新')">
+                <RefreshCw :size="16" /><span>{{ store.giftStats.loading ? "统计中…" : (store.giftStats.loaded ? "重新统计" : "开始统计") }}</span>
+              </button>
+            </div>
+          </div>
+          <div class="gift-filter-panel">
+            <div class="gift-date-range-control">
+              <span>时间范围</span>
+              <input
+                :value="store.giftStats.dateRangeStart"
+                type="datetime-local"
+                aria-label="礼物统计起始时间"
+                @change="setGiftDateRange($event.target.value, store.giftStats.dateRangeEnd)"
+              />
+              <span class="gift-date-separator">至</span>
+              <input
+                :value="store.giftStats.dateRangeEnd"
+                type="datetime-local"
+                aria-label="礼物统计结束时间"
+                @change="setGiftDateRange(store.giftStats.dateRangeStart, $event.target.value)"
+              />
+            </div>
+            <div class="gift-preset-row">
+              <button
+                v-for="preset in giftDatePresets"
+                :key="preset.id"
+                class="gift-preset-button"
+                type="button"
+                :title="preset.title"
+                @click="setGiftDatePreset(preset.id)"
+              >
+                {{ preset.label }}
+              </button>
+            </div>
+          </div>
+          <div v-if="!store.isLoggedIn" class="empty-state compact-empty">请先在「账号」登录后再统计。</div>
+          <div v-else-if="store.giftStats.loading" class="empty-state compact-empty">{{ store.giftStats.progress || "正在拉取礼物记录…" }}</div>
+          <div v-else-if="store.giftStats.error" class="empty-state compact-empty text-red">统计失败：{{ store.giftStats.error }}</div>
+          <div v-else-if="!store.giftStats.loaded" class="empty-state compact-empty">点击「开始统计」拉取你的送出/收到礼物记录。</div>
+          <template v-else>
+            <div class="metrics gift-overview">
+              <div><strong>{{ displayCount(store.giftStats.sendAcoinTotal) }}</strong><span>送出 AC币</span></div>
+              <div><strong>{{ displayCount(store.giftStats.receiveDiamondTotal) }}</strong><span>收到钻石</span></div>
+              <div><strong>{{ displayCount(store.giftStats.receivePeachTotal) }}</strong><span>收到桃子</span></div>
+            </div>
+          </template>
+        </div>
+
+        <div v-if="store.giftStats.loaded && !store.giftStats.loading" class="gift-tables">
+          <div class="panel">
+            <div class="panel-head"><h3>送出礼物排行（AC币）</h3></div>
+            <div v-if="store.giftStats.sendRank.length === 0" class="empty-state compact-empty">暂无送出记录。</div>
+            <table v-else class="gift-table">
+              <thead><tr><th>#</th><th>用户</th><th>uid</th><th>AC币</th></tr></thead>
+              <tbody>
+                <tr v-for="(u, i) in store.giftStats.sendRank" :key="u.uid">
+                  <td>{{ i + 1 }}</td><td>{{ u.userName }}</td><td>{{ u.uid }}</td><td>{{ u.acoin }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>桃榜（收到桃子）</h3></div>
+            <div v-if="store.giftStats.peachRank.length === 0" class="empty-state compact-empty">暂无收到的桃子。</div>
+            <table v-else class="gift-table">
+              <thead><tr><th>#</th><th>用户</th><th>uid</th><th>桃</th></tr></thead>
+              <tbody>
+                <tr v-for="(u, i) in store.giftStats.peachRank" :key="u.uid">
+                  <td>{{ i + 1 }}</td><td>{{ u.userName }}</td><td>{{ u.uid }}</td><td>{{ u.peach }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>贡献榜（收到钻石）</h3></div>
+            <div v-if="store.giftStats.contribRank.length === 0" class="empty-state compact-empty">暂无收到的礼物。</div>
+            <table v-else class="gift-table">
+              <thead><tr><th>#</th><th>用户</th><th>uid</th><th>钻石</th></tr></thead>
+              <tbody>
+                <tr v-for="(u, i) in store.giftStats.contribRank" :key="u.uid">
+                  <td>{{ i + 1 }}</td><td>{{ u.userName }}</td><td>{{ u.uid }}</td><td>{{ u.diamond }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- 日志 -->
       <section v-if="store.activeTab === 'logs'" class="panel">
         <div class="panel-head">
@@ -1517,6 +1633,7 @@ import {
   Activity,
   Ban,
   ChartBar,
+  Gift,
   Clipboard,
   CloudDownload,
   Download,
@@ -2133,6 +2250,8 @@ const loginForm = reactive({
 })
 const commentText = ref("")
 const commentInputRef = ref(null)
+const showMomentComposer = ref(false)
+const momentText = ref("")
 const showAddManagerInput = ref(false)
 const addManagerUid = ref("")
 const coverPreviewSrc = ref("")
@@ -2174,7 +2293,16 @@ const tabs = [
   { id: "room", label: "直播间", subtitle: "弹幕、观众、房管与黑名单", icon: Users },
   { id: "overlay", label: "弹幕源", subtitle: "OBS 浏览器源外观与预览", icon: MonitorPlay },
   { id: "stats", label: "数据", subtitle: "本场统计、转码信息与历史", icon: ChartBar },
+  { id: "gift", label: "礼物统计", subtitle: "送出/收到礼物记录与排行", icon: Gift },
   { id: "logs", label: "日志", subtitle: "本地操作记录", icon: ScrollText },
+]
+const giftDatePresets = [
+  { id: "month", label: "本月", title: "本月 1 号 00:00 至现在" },
+  { id: "week", label: "本周", title: "本周一 00:00 至现在" },
+  { id: "yesterday", label: "昨天", title: "昨天 00:00 至 23:59" },
+  { id: "threeMonths", label: "近3月", title: "近三个月至现在" },
+  { id: "halfYear", label: "半年", title: "近六个月至现在" },
+  { id: "all", label: "全部", title: "清除时间范围" },
 ]
 
 const currentTab = computed(() => tabs.find((item) => item.id === store.activeTab) || tabs[0])
@@ -3380,6 +3508,14 @@ async function sendComment() {
   }, "弹幕已发送")
 }
 
+async function publishMoment() {
+  await run(async () => {
+    await store.addMoment(momentText.value)
+    momentText.value = ""
+    showMomentComposer.value = false
+  }, "动态已发布")
+}
+
 async function insertAIslandEmote(value, selectEl) {
   const emote = String(value || "")
   if (!emote) return
@@ -3454,6 +3590,64 @@ function formatTime(value) {
 
 function displayCount(value) {
   return value === undefined || value === null || value === "" ? "-" : value
+}
+
+function setGiftDateRange(start, end) {
+  store.setGiftStatsDateRange(start, end)
+}
+
+function setGiftDatePreset(preset) {
+  const now = new Date()
+  let start = null
+  let end = now
+
+  if (preset === "all") {
+    setGiftDateRange("", "")
+    return
+  }
+  if (preset === "month") {
+    start = startOfLocalDay(new Date(now.getFullYear(), now.getMonth(), 1))
+  } else if (preset === "week") {
+    start = startOfLocalDay(now)
+    const day = start.getDay() || 7
+    start.setDate(start.getDate() - day + 1)
+  } else if (preset === "yesterday") {
+    start = startOfLocalDay(now)
+    start.setDate(start.getDate() - 1)
+    end = endOfLocalDay(start)
+  } else if (preset === "threeMonths") {
+    start = startOfLocalDay(now)
+    start.setMonth(start.getMonth() - 3)
+  } else if (preset === "halfYear") {
+    start = startOfLocalDay(now)
+    start.setMonth(start.getMonth() - 6)
+  }
+
+  setGiftDateRange(formatDateTimeLocal(start), formatDateTimeLocal(end))
+}
+
+function startOfLocalDay(date) {
+  const value = new Date(date)
+  value.setHours(0, 0, 0, 0)
+  return value
+}
+
+function endOfLocalDay(date) {
+  const value = new Date(date)
+  value.setHours(23, 59, 0, 0)
+  return value
+}
+
+function formatDateTimeLocal(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return ""
+  }
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  const hour = String(date.getHours()).padStart(2, "0")
+  const minute = String(date.getMinutes()).padStart(2, "0")
+  return `${year}-${month}-${day}T${hour}:${minute}`
 }
 
 function rankRowClass(rank) {

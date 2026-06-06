@@ -57,6 +57,63 @@ function parseCount(...values) {
   return null
 }
 
+function parseGiftRecordTime(record) {
+  const value = record?.createTime
+  if (value === undefined || value === null || value === "") {
+    return 0
+  }
+  const number = Number(value)
+  if (Number.isFinite(number)) {
+    return number > 9999999999 ? number : number * 1000
+  }
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function parseDateTimeLocal(value, includeMinuteEnd = false) {
+  const text = String(value || "").trim()
+  if (!text) {
+    return 0
+  }
+  const parsed = Date.parse(text)
+  if (!Number.isFinite(parsed)) {
+    return 0
+  }
+  return includeMinuteEnd ? parsed + 59999 : parsed
+}
+
+function giftStatsRange(giftStats) {
+  let start = parseDateTimeLocal(giftStats.dateRangeStart)
+  let end = parseDateTimeLocal(giftStats.dateRangeEnd, true)
+  if (start && end && start > end) {
+    const oldStart = start
+    start = end
+    end = oldStart
+  }
+  return {
+    active: Boolean(start || end),
+    start,
+    end,
+  }
+}
+
+function isGiftRecordInRange(record, range) {
+  if (!range.active) {
+    return true
+  }
+  const time = parseGiftRecordTime(record)
+  if (!time) {
+    return false
+  }
+  if (range.start && time < range.start) {
+    return false
+  }
+  if (range.end && time > range.end) {
+    return false
+  }
+  return true
+}
+
 function formatError(error) {
   return error && error.message ? error.message : String(error)
 }
@@ -390,6 +447,7 @@ function defaultState() {
   const savedOverlay = saved.overlay || {}
   const savedObs = saved.obs || {}
   const savedUi = saved.ui || {}
+  const savedGiftStats = saved.giftStats || {}
   const savedProfile = saved.userProfile || {}
   const liveHistoryByUser = loadLiveHistoryByUser(saved)
   const liveDailyStatsByUser = normalizeLiveDailyStatsByUser(saved.liveDailyStatsByUser)
@@ -407,6 +465,20 @@ function defaultState() {
     userName: saved.userName || "",
     userId: saved.userId || "",
     userProfile: normalizeUserProfile(savedProfile, saved.userId || ""),
+    giftStats: {
+      loading: false,
+      loaded: false,
+      error: "",
+      progress: "",
+      dateRangeStart: savedGiftStats.dateRangeStart || "",
+      dateRangeEnd: savedGiftStats.dateRangeEnd || "",
+      sendAcoinTotal: 0,
+      receiveDiamondTotal: 0,
+      receivePeachTotal: 0,
+      sendRank: [],
+      peachRank: [],
+      contribRank: [],
+    },
     room: {
       isLive: false,
       liveId: "",
@@ -575,6 +647,10 @@ export const useLiveStore = defineStore("live", {
         liveDailyStatsByUser,
         liveTimerByUser,
         liveSummary: this.live.isLive || this.room.isLive ? normalizeLiveSummary(this.summary) : emptyLiveSummary(),
+        giftStats: {
+          dateRangeStart: this.giftStats.dateRangeStart,
+          dateRangeEnd: this.giftStats.dateRangeEnd,
+        },
         overlay: this.overlay,
         obs: {
           enabled: this.obs.enabled,
@@ -596,6 +672,24 @@ export const useLiveStore = defineStore("live", {
     },
     toggleTheme() {
       this.setTheme(this.ui.theme === "dark" ? "light" : "dark")
+    },
+    resetGiftStatsResults() {
+      const gs = this.giftStats
+      gs.loaded = false
+      gs.error = ""
+      gs.progress = ""
+      gs.sendAcoinTotal = 0
+      gs.receiveDiamondTotal = 0
+      gs.receivePeachTotal = 0
+      gs.sendRank = []
+      gs.peachRank = []
+      gs.contribRank = []
+    },
+    setGiftStatsDateRange(start, end) {
+      this.giftStats.dateRangeStart = start || ""
+      this.giftStats.dateRangeEnd = end || ""
+      this.resetGiftStatsResults()
+      this.persist()
     },
     toggleSidebar() {
       this.ui.sidebarCollapsed = !this.ui.sidebarCollapsed
@@ -1376,6 +1470,103 @@ export const useLiveStore = defineStore("live", {
         avatar: this.userProfile.avatar || "",
       })
       this.log(`弹幕已发送：${text}`)
+    },
+    // 发布一条动态（文字 / 图片）。imgs 为可选的图片数组 [{url,width,height}]。
+    async addMoment(content, imgs) {
+      const text = String(content || "").trim()
+      const images = Array.isArray(imgs) ? imgs : []
+      if (!text && images.length === 0) {
+        throw new Error("动态内容不能为空")
+      }
+      if ([...text].length > 233) {
+        throw new Error("内容长度必须为 1-233 字")
+      }
+      const data = await this.request(BackendTypes.ADD_MOMENT, {
+        content: text,
+        imgs: images,
+      })
+      this.log(`动态已发布：${text || "[图片]"}`)
+      return data
+    },
+    // 拉取并聚合礼物统计（送出/收到记录，分页 pcursor）
+    async loadGiftStats() {
+      const gs = this.giftStats
+      gs.loading = true
+      gs.error = ""
+      gs.progress = "准备中…"
+      try {
+        await this.ensureBackendToken()
+        const range = giftStatsRange(gs)
+        const fetchAll = async (kind, onPage) => {
+          let pcursor = "0"
+          let pages = 0
+          while (pcursor !== "no_more" && pages < 300) {
+            const data = await this.request(BackendTypes.GET_REWARD_RECORDS, { kind, pcursor })
+            const records = Array.isArray(data?.records) ? data.records : []
+            records.forEach((record) => {
+              if (isGiftRecordInRange(record, range)) {
+                onPage(record)
+              }
+            })
+            pcursor = data?.pcursor || "no_more"
+            pages += 1
+            gs.progress = `${kind === "give" ? "送出" : "收到"}记录已读取 ${pages} 页…`
+            if (records.length === 0 && pcursor !== "no_more") break
+          }
+        }
+
+        const sendMap = new Map()
+        const recvMap = new Map()
+        let sendAcoinTotal = 0
+        let receiveDiamondTotal = 0
+        let receivePeachTotal = 0
+
+        const touch = (map, r) => {
+          const uid = String(r.userId)
+          let u = map.get(uid)
+          if (!u) {
+            u = { uid, userName: r.userName || uid, acoin: 0, diamond: 0, peach: 0 }
+            map.set(uid, u)
+          }
+          if (!u.userName && r.userName) u.userName = r.userName
+          return u
+        }
+
+        await fetchAll("give", (r) => {
+          const acoin = Number(r.acoin) || 0
+          sendAcoinTotal += acoin
+          touch(sendMap, r).acoin += acoin
+        })
+
+        await fetchAll("receive", (r) => {
+          const u = touch(recvMap, r)
+          if (r.giftName === "桃子") {
+            const peach = Number(r.giftCount) || 0
+            u.peach += peach
+            receivePeachTotal += peach
+          } else {
+            const diamond = Number(r.azuanAmount) || 0
+            u.diamond += diamond
+            receiveDiamondTotal += diamond
+          }
+        })
+
+        gs.sendAcoinTotal = sendAcoinTotal
+        gs.receiveDiamondTotal = receiveDiamondTotal
+        gs.receivePeachTotal = receivePeachTotal
+        gs.sendRank = [...sendMap.values()].filter((u) => u.acoin > 0).sort((a, b) => b.acoin - a.acoin).slice(0, 100)
+        gs.peachRank = [...recvMap.values()].filter((u) => u.peach > 0).sort((a, b) => b.peach - a.peach).slice(0, 100)
+        gs.contribRank = [...recvMap.values()].filter((u) => u.diamond > 0).sort((a, b) => b.diamond - a.diamond).slice(0, 100)
+        gs.loaded = true
+        gs.progress = ""
+        this.log(`礼物统计完成：送出 ${sendAcoinTotal} AC币，收到 ${receiveDiamondTotal} 钻石`)
+      } catch (error) {
+        gs.error = formatError(error)
+        this.log(`礼物统计失败：${gs.error}`)
+        throw error
+      } finally {
+        gs.loading = false
+      }
     },
     // 拉取指定 liveID 的录播信息（GET_PLAYBACK），并把结果缓存到对应的历史记录上。
     // 关播后该 liveID 仍可继续查询，可用于"直播历史"里点开回放。

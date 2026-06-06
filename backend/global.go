@@ -55,6 +55,12 @@ const (
 	getLiveCutInfoType
 )
 
+// 动态 / 礼物统计类型
+const (
+	addMomentType = iota + 400
+	getRewardRecordsType
+)
+
 const (
 	getManagerListType = iota + 200
 	addManagerType
