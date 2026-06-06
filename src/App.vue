@@ -232,7 +232,7 @@
             @click="manualCheckForUpdate"
           >
             <Download v-if="updateState.hasUpdate || updateState.downloading || updateState.installing" :size="17" />
-            <RefreshCw v-else :size="17" />
+            <CloudDownload v-else :size="17" />
           </button>
           <div v-if="store.isLoggedIn" class="profile-chip" @click="store.activeTab = 'account'">
             <div class="avatar avatar-sm">
@@ -1518,6 +1518,7 @@ import {
   Ban,
   ChartBar,
   Clipboard,
+  CloudDownload,
   Download,
   Eye,
   EyeOff,

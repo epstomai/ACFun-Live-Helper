@@ -28,6 +28,12 @@ const (
 	githubReleasesURL = "https://github.com/" + githubOwner + "/" + githubRepo + "/releases"
 )
 
+// releaseCache 缓存上次 GitHub Releases 的 ETag 和结果，避免重复消耗速率配额。
+var releaseCache struct {
+	etag    string
+	release githubRelease
+}
+
 type UpdateInfo struct {
 	CurrentVersion string `json:"currentVersion"`
 	LatestVersion  string `json:"latestVersion"`
@@ -211,6 +217,9 @@ func fetchBestGithubRelease(ctx context.Context) (githubRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "ACFun-Live-Helper/"+appVersion)
+	if releaseCache.etag != "" {
+		req.Header.Set("If-None-Match", releaseCache.etag)
+	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
@@ -218,6 +227,16 @@ func fetchBestGithubRelease(ctx context.Context) (githubRelease, error) {
 		return githubRelease{}, fmt.Errorf("检查 GitHub 更新失败: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotModified && releaseCache.release.TagName != "" {
+		return releaseCache.release, nil
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		if releaseCache.release.TagName != "" {
+			return releaseCache.release, nil
+		}
+		return githubRelease{}, fmt.Errorf("GitHub API 请求频率超限 (HTTP %d)，请稍后再试", resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return githubRelease{}, fmt.Errorf("GitHub Releases 返回 HTTP %d", resp.StatusCode)
 	}
@@ -237,6 +256,11 @@ func fetchBestGithubRelease(ctx context.Context) (githubRelease, error) {
 	}
 	if best.TagName == "" {
 		return githubRelease{}, errors.New("GitHub Releases 中没有可用版本")
+	}
+
+	if etag := resp.Header.Get("ETag"); etag != "" {
+		releaseCache.etag = etag
+		releaseCache.release = best
 	}
 	return best, nil
 }
