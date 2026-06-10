@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ACFun Song Request Overlay</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+        color: #f8fafc;
+        font-family: "Microsoft YaHei", "Noto Sans SC", "Segoe UI", Arial, sans-serif;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      #stage {
+        width: min(92vw, 1120px);
+        min-height: min(74vh, 640px);
+        display: grid;
+        grid-template-columns: minmax(340px, 0.9fr) minmax(360px, 1.1fr);
+        gap: 28px;
+        align-items: center;
+        padding: 32px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 26px;
+        background:
+          linear-gradient(135deg, rgba(15, 23, 42, 0.86), rgba(24, 24, 27, 0.78)),
+          radial-gradient(circle at 28% 24%, rgba(253, 76, 93, 0.28), transparent 34%),
+          radial-gradient(circle at 78% 88%, rgba(45, 212, 191, 0.16), transparent 36%);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.46);
+        opacity: 1;
+        transition: opacity 240ms ease, transform 240ms ease;
+      }
+
+      #stage.idle {
+        opacity: 0.92;
+      }
+
+      .turntable {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: min(37vw, 390px);
+        aspect-ratio: 1;
+        margin: 0 auto;
+      }
+
+      .disc {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background:
+          repeating-radial-gradient(circle, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px),
+          radial-gradient(circle at 50% 50%, #111827 0 12%, #020617 13% 47%, #18181b 48% 58%, #030712 59% 100%);
+        border: 3px solid rgba(255, 255, 255, 0.18);
+        box-shadow:
+          0 24px 58px rgba(0, 0, 0, 0.5),
+          inset 0 0 0 12px rgba(255, 255, 255, 0.025),
+          inset 0 0 48px rgba(0, 0, 0, 0.9);
+        animation: spin 6s linear infinite;
+      }
+
+      .paused .disc,
+      .idle .disc {
+        animation-play-state: paused;
+      }
+
+      .disc::before {
+        content: "";
+        position: absolute;
+        inset: 12%;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background:
+          linear-gradient(90deg, transparent 0 47%, rgba(255, 255, 255, 0.1) 48% 52%, transparent 53% 100%),
+          linear-gradient(0deg, transparent 0 47%, rgba(255, 255, 255, 0.08) 48% 52%, transparent 53% 100%);
+      }
+
+      .label {
+        position: absolute;
+        width: 33%;
+        aspect-ratio: 1;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle, #f8fafc 0 8%, #fd4c5d 9% 56%, #be123c 57% 100%);
+        border: 8px solid rgba(255, 255, 255, 0.12);
+        box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.36);
+        animation: spin 6s linear infinite;
+      }
+
+      .paused .label,
+      .idle .label {
+        animation-play-state: paused;
+      }
+
+      .arm {
+        position: absolute;
+        top: 10%;
+        right: -2%;
+        width: 38%;
+        height: 10px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #d4d4d8, #71717a);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42);
+        transform: rotate(28deg);
+        transform-origin: 88% 50%;
+      }
+
+      .arm::after {
+        content: "";
+        position: absolute;
+        left: -12px;
+        top: -9px;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: #fd4c5d;
+        box-shadow: 0 0 0 8px rgba(253, 76, 93, 0.16);
+      }
+
+      .song-panel {
+        min-width: 0;
+      }
+
+      .status-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 30px;
+        padding: 5px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.09);
+        color: #e2e8f0;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 14px rgba(34, 197, 94, 0.75);
+      }
+
+      .paused .dot,
+      .idle .dot {
+        background: #f59e0b;
+        box-shadow: 0 0 14px rgba(245, 158, 11, 0.72);
+      }
+
+      h1 {
+        margin: 0;
+        color: #ffffff;
+        font-size: clamp(34px, 4.8vw, 70px);
+        line-height: 1.06;
+        font-weight: 900;
+        letter-spacing: 0;
+        text-wrap: balance;
+        overflow-wrap: anywhere;
+        text-shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+        color: #cbd5e1;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .meta span {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .source {
+        margin-top: 12px;
+        color: #94a3b8;
+        font-size: 14px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .progress {
+        margin-top: 28px;
+      }
+
+      .track {
+        position: relative;
+        height: 12px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+      }
+
+      #progressBar {
+        width: 0%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #fd4c5d, #facc15, #2dd4bf);
+        box-shadow: 0 0 22px rgba(253, 76, 93, 0.48);
+        transition: width 220ms ease;
+      }
+
+      .time-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        color: #cbd5e1;
+        font-size: 15px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .sung-list {
+        margin-top: 30px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255, 255, 255, 0.14);
+      }
+
+      .sung-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        color: #e2e8f0;
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .sung-head span {
+        color: #94a3b8;
+        font-size: 14px;
+      }
+
+      #sungItems {
+        display: grid;
+        gap: 8px;
+      }
+
+      .sung-item {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 42px;
+        padding: 8px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.07);
+      }
+
+      .sung-index {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: rgba(253, 76, 93, 0.2);
+        color: #fecdd3;
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .sung-title {
+        min-width: 0;
+        overflow: hidden;
+        color: #f8fafc;
+        font-size: 15px;
+        font-weight: 800;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sung-meta {
+        min-width: 0;
+        color: #94a3b8;
+        font-size: 13px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sung-state {
+        color: #cbd5e1;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .empty {
+        padding: 14px 0;
+        color: #94a3b8;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (max-width: 760px) {
+        #stage {
+          width: 94vw;
+          min-height: auto;
+          grid-template-columns: 1fr;
+          gap: 18px;
+          padding: 22px;
+        }
+
+        .turntable {
+          width: min(62vw, 300px);
+        }
+
+        h1 {
+          font-size: clamp(30px, 8vw, 48px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="stage" class="idle">
+      <section class="turntable" aria-hidden="true">
+        <div class="disc"></div>
+        <div class="label"></div>
+        <div class="arm"></div>
+      </section>
+      <section class="song-panel">
+        <div class="status-row">
+          <span class="pill"><span class="dot"></span><span id="statusText">等待点歌</span></span>
+          <span class="pill" id="modeText">黑胶播放器</span>
+        </div>
+        <h1 id="songTitle">等待点歌</h1>
+        <div class="meta">
+          <span id="requesterText">点歌者：暂无</span>
+          <span id="categoryText">分类：观众点播</span>
+        </div>
+        <div class="source" id="sourceText"></div>
+        <div class="progress">
+          <div class="track"><div id="progressBar"></div></div>
+          <div class="time-row">
+            <span id="currentTime">00:00</span>
+            <span id="totalTime">00:00</span>
+          </div>
+        </div>
+        <section class="sung-list">
+          <div class="sung-head">
+            <strong>已唱列表</strong>
+            <span id="sungCount">0 首</span>
+          </div>
+          <div id="sungItems"><div class="empty">暂无已唱歌曲</div></div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        active: false,
+        paused: false,
+        current: null,
+        next: null,
+        progressSeconds: 0,
+        sung: [],
+      }
+
+      const stage = document.getElementById("stage")
+      const statusText = document.getElementById("statusText")
+      const songTitle = document.getElementById("songTitle")
+      const requesterText = document.getElementById("requesterText")
+      const categoryText = document.getElementById("categoryText")
+      const sourceText = document.getElementById("sourceText")
+      const progressBar = document.getElementById("progressBar")
+      const currentTime = document.getElementById("currentTime")
+      const totalTime = document.getElementById("totalTime")
+      const sungItems = document.getElementById("sungItems")
+      const sungCount = document.getElementById("sungCount")
+
+      function text(value, fallback) {
+        const result = String(value || "").trim()
+        return result || fallback
+      }
+
+      function formatDuration(seconds) {
+        const value = Math.max(0, Math.floor(Number(seconds) || 0))
+        const minutes = Math.floor(value / 60)
+        const rest = value % 60
+        return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`
+      }
+
+      function applyPayload(raw) {
+        if (!raw) return
+        try {
+          const payload = typeof raw === "string" ? JSON.parse(raw) : raw
+          Object.assign(state, payload || {})
+          render()
+        } catch (_) {}
+      }
+
+      function render() {
+        const song = state.current || state.next || null
+        const active = Boolean(state.active)
+        const paused = Boolean(state.paused)
+        const hasCurrent = Boolean(state.current)
+        stage.classList.toggle("idle", !song || !active)
+        stage.classList.toggle("paused", paused || !hasCurrent)
+
+        statusText.textContent = !active ? "点歌已暂停" : hasCurrent ? (paused ? "已暂停" : "正在播放") : "等待播放"
+        songTitle.textContent = text(song && song.title, active ? "等待点歌" : "点歌已暂停")
+        requesterText.textContent = `点歌者：${text(song && song.nickname, "暂无")}`
+        categoryText.textContent = `分类：${text(song && song.category, "观众点播")}`
+        sourceText.textContent = text(song && (song.url || song.remark), "")
+
+        const duration = Math.max(1, Number(song && song.durationSeconds) || 240)
+        const progress = hasCurrent ? Math.min(duration, Math.max(0, Number(state.progressSeconds) || 0)) : 0
+        progressBar.style.width = `${Math.min(100, Math.max(0, (progress / duration) * 100)).toFixed(1)}%`
+        currentTime.textContent = formatDuration(progress)
+        totalTime.textContent = formatDuration(hasCurrent || song ? duration : 0)
+
+        const sung = Array.isArray(state.sung) ? state.sung.slice(0, 8) : []
+        sungCount.textContent = `${sung.length} 首`
+        if (!sung.length) {
+          sungItems.innerHTML = '<div class="empty">暂无已唱歌曲</div>'
+          return
+        }
+        sungItems.innerHTML = sung.map((item, index) => `
+          <article class="sung-item">
+            <span class="sung-index">${index + 1}</span>
+            <div>
+              <div class="sung-title">${escapeHtml(text(item.title, "未命名歌曲"))}</div>
+              <div class="sung-meta">${escapeHtml(text(item.nickname, "匿名观众"))} · ${escapeHtml(text(item.category, "点播"))}</div>
+            </div>
+            <span class="sung-state">${item.skipped ? "跳过" : "已唱"}</span>
+          </article>
+        `).join("")
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;")
+      }
+
+      fetch("/style.json?channel=song", { cache: "no-store" })
+        .then((response) => response.ok ? response.json() : {})
+        .then(applyPayload)
+        .catch(() => {})
+
+      try {
+        const events = new EventSource("/events?channel=song")
+        events.addEventListener("style", (event) => applyPayload(event.data))
+      } catch (_) {}
+
+      render()
+    </script>
+  </body>
+</html>

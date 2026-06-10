@@ -22,6 +22,21 @@ let obsObservedStreaming = false
 let obsPreserveRestoreOnClose = false
 let liveTimelineSampler = null
 const LIVE_TIMELINE_SAMPLE_INTERVAL_MS = 60000
+const GIFT_STATS_FULL_PAGE_LIMIT = 300
+const GIFT_STATS_AUTO_PAGE_LIMIT = 50
+const GIFT_STATS_AUTO_RECORD_LIMIT = 2000
+const GIFT_STATS_AUTO_TIME_LIMIT_MS = 8000
+const INTERACTION_HISTORY_LIMIT = 30
+const INTERACTION_SONG_QUEUE_LIMIT = 100
+const INTERACTION_RECENT_LIMIT = 80
+const INTERACTION_SONG_PER_USER_LIMIT = 20
+const INTERACTION_ADMIN_PREVIEW_LIMIT = 50
+const INTERACTION_SONG_PREPLAY_LIMIT = 100
+const SONG_REQUEST_OBS_MODES = new Set(["vinylPortrait"])
+
+function minuteEndTimestamp(timestamp) {
+  return Math.floor(Number(timestamp || Date.now()) / 60000) * 60000 + 59999
+}
 
 function loadSavedState() {
   try {
@@ -112,6 +127,242 @@ function isGiftRecordInRange(record, range) {
     return false
   }
   return true
+}
+
+function buildGiftStatsSummary(sendRecords, receiveRecords, range) {
+  const sendMap = new Map()
+  const recvMap = new Map()
+  let sendAcoinTotal = 0
+  let receiveDiamondTotal = 0
+  let receivePeachTotal = 0
+
+  const touch = (map, r) => {
+    const uid = String(r.userId)
+    let u = map.get(uid)
+    if (!u) {
+      u = { uid, userName: r.userName || uid, acoin: 0, diamond: 0, peach: 0 }
+      map.set(uid, u)
+    }
+    if (!u.userName && r.userName) u.userName = r.userName
+    return u
+  }
+
+  sendRecords.forEach((r) => {
+    if (!isGiftRecordInRange(r, range)) {
+      return
+    }
+    const acoin = Number(r.acoin) || 0
+    sendAcoinTotal += acoin
+    touch(sendMap, r).acoin += acoin
+  })
+
+  receiveRecords.forEach((r) => {
+    if (!isGiftRecordInRange(r, range)) {
+      return
+    }
+    const u = touch(recvMap, r)
+    if (r.giftName === "桃子") {
+      const peach = Number(r.giftCount) || 0
+      u.peach += peach
+      receivePeachTotal += peach
+    } else {
+      const diamond = Number(r.azuanAmount) || 0
+      u.diamond += diamond
+      receiveDiamondTotal += diamond
+    }
+  })
+
+  return {
+    sendAcoinTotal,
+    receiveDiamondTotal,
+    receivePeachTotal,
+    sendRank: [...sendMap.values()].filter((u) => u.acoin > 0).sort((a, b) => b.acoin - a.acoin).slice(0, 100),
+    peachRank: [...recvMap.values()].filter((u) => u.peach > 0).sort((a, b) => b.peach - a.peach).slice(0, 100),
+    contribRank: [...recvMap.values()].filter((u) => u.diamond > 0).sort((a, b) => b.diamond - a.diamond).slice(0, 100),
+  }
+}
+
+function applyGiftStatsSummary(giftStats, summary) {
+  giftStats.sendAcoinTotal = summary.sendAcoinTotal
+  giftStats.receiveDiamondTotal = summary.receiveDiamondTotal
+  giftStats.receivePeachTotal = summary.receivePeachTotal
+  giftStats.sendRank = summary.sendRank
+  giftStats.peachRank = summary.peachRank
+  giftStats.contribRank = summary.contribRank
+}
+
+function giftStatsCacheStart(sendRecords, receiveRecords) {
+  let start = 0
+  ;[sendRecords, receiveRecords].forEach((records) => {
+    records.forEach((record) => {
+      const time = parseGiftRecordTime(record)
+      if (time && (!start || time < start)) {
+        start = time
+      }
+    })
+  })
+  return start
+}
+
+function isGiftStatsRangeCoveredByCache(giftStats, range) {
+  if (!giftStats.fetchedAt) {
+    return false
+  }
+  if (!range.active) {
+    return Boolean(giftStats.cacheComplete)
+  }
+  const cacheStart = Number(giftStats.cacheRangeStart) || 0
+  const cacheEnd = Number(giftStats.cacheRangeEnd || giftStats.fetchedAt) || 0
+  if (!giftStats.cacheComplete && !cacheStart) {
+    return false
+  }
+  if (!giftStats.cacheComplete && !range.start) {
+    return false
+  }
+  if (!giftStats.cacheComplete && range.start && cacheStart && range.start < cacheStart) {
+    return false
+  }
+  if (range.end && cacheEnd && range.end > cacheEnd) {
+    return false
+  }
+  return true
+}
+
+function clampInteger(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10)
+  if (!Number.isFinite(number)) {
+    return fallback
+  }
+  return Math.min(max, Math.max(min, number))
+}
+
+function normalizeInteractionKeyword(value, fallback) {
+  const text = String(value || "").trim()
+  return (text || fallback).slice(0, 20)
+}
+
+function normalizeInteractionSettings(savedInteraction = {}) {
+  const lottery = savedInteraction.lottery || {}
+  const songRequest = savedInteraction.songRequest || {}
+  const obsMode = SONG_REQUEST_OBS_MODES.has(songRequest.obsMode) ? songRequest.obsMode : "vinylPortrait"
+  const maxQueueSize = clampInteger(songRequest.maxQueueSize, 5, INTERACTION_SONG_QUEUE_LIMIT, 30)
+  return {
+    lottery: {
+      keyword: normalizeInteractionKeyword(lottery.keyword, "抽奖"),
+      winnerCount: clampInteger(lottery.winnerCount, 1, 20, 1),
+      uniqueByUser: lottery.uniqueByUser !== false,
+    },
+      songRequest: {
+        keyword: normalizeInteractionKeyword(songRequest.keyword, "点歌"),
+        uniqueByUser: songRequest.uniqueByUser !== false,
+        obsMode,
+        maxPerUser: clampInteger(songRequest.maxPerUser, 1, INTERACTION_SONG_PER_USER_LIMIT, 3),
+        maxQueueSize,
+        adminPreviewLimit: clampInteger(songRequest.adminPreviewLimit, 5, INTERACTION_ADMIN_PREVIEW_LIMIT, 12),
+        browserSourceName: String(songRequest.browserSourceName || "ACFun 点歌机").trim() || "ACFun 点歌机",
+      },
+  }
+}
+
+function normalizeDanmakuUser(item = {}) {
+  const userId = String(item.userId || "").trim()
+  const nickname = String(item.nickname || "匿名用户").trim() || "匿名用户"
+  return {
+    userId,
+    nickname,
+    userKey: userId || nickname,
+  }
+}
+
+function normalizeDanmakuContent(item = {}) {
+  return String(item.content || "").trim()
+}
+
+function buildInteractionEntry(item, extra = {}) {
+  const user = normalizeDanmakuUser(item)
+  const time = Number(item.time || Math.floor(Date.now() / 1000))
+  const title = String(extra.title || normalizeDanmakuContent(item) || "未命名歌曲").trim()
+  return {
+    id: `${Date.now()}-${user.userKey || "anon"}-${time}-${String(item.id || "").slice(-12)}`,
+    userId: user.userId,
+    nickname: user.nickname,
+    content: normalizeDanmakuContent(item),
+    time,
+    sourceId: item.id || item.uniqueId || "",
+    title: title.slice(0, 100),
+    category: normalizeSongCategory(extra.category || title),
+    remark: String(extra.remark || "").trim().slice(0, 120),
+    url: String(extra.url || "").trim().slice(0, 300),
+    durationSeconds: clampInteger(extra.durationSeconds, 30, 7200, estimateSongDuration(title)),
+    ...extra,
+  }
+}
+
+function normalizeSongCategory(value) {
+  const text = String(value || "").trim()
+  if (/youtu|youtube|youtu\.be|^https?:\/\//i.test(text)) {
+    return "YouTube"
+  }
+  if (/伴奏|karaoke|off vocal|instrumental/i.test(text)) {
+    return "伴奏"
+  }
+  return "观众点播"
+}
+
+function estimateSongDuration(title) {
+  const text = String(title || "")
+  const base = 210 + (text.length % 9) * 12
+  return Math.min(420, Math.max(120, base))
+}
+
+function isPlainTextDanmaku(item) {
+  return item && !item.isGift && item.type === LegacyDanmuTypes.ADD_TEXT && normalizeDanmakuContent(item)
+}
+
+function lotteryKeywordMatched(content, keyword) {
+  const text = String(content || "").toLowerCase()
+  const key = String(keyword || "").trim().toLowerCase()
+  return Boolean(key && text.includes(key))
+}
+
+function extractSongTitle(content, keyword) {
+  const text = String(content || "").trim()
+  const key = String(keyword || "").trim()
+  if (!text || !key) {
+    return ""
+  }
+  const lowerText = text.toLowerCase()
+  const lowerKey = key.toLowerCase()
+  const candidates = key.startsWith("#") || key.startsWith("/") ? [key] : [key, `#${key}`, `/${key}`]
+  for (const candidate of candidates) {
+    const lowerCandidate = candidate.toLowerCase()
+    if (!lowerText.startsWith(lowerCandidate)) {
+      continue
+    }
+    return text
+      .slice(candidate.length)
+      .replace(/^[\s:：,，;；\-—|]+/, "")
+      .trim()
+      .slice(0, 80)
+  }
+  if (lowerText.startsWith(lowerKey)) {
+    return text.slice(key.length).trim().slice(0, 80)
+  }
+  return ""
+}
+
+function randomIndex(max) {
+  const size = Number(max) || 0
+  if (size <= 1) {
+    return 0
+  }
+  const cryptoApi = globalThis.crypto
+  if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
+    const buffer = new Uint32Array(1)
+    cryptoApi.getRandomValues(buffer)
+    return buffer[0] % size
+  }
+  return Math.floor(Math.random() * size)
 }
 
 function formatError(error) {
@@ -449,6 +700,7 @@ function defaultState() {
   const savedUi = saved.ui || {}
   const savedGiftStats = saved.giftStats || {}
   const savedProfile = saved.userProfile || {}
+  const savedInteraction = normalizeInteractionSettings(saved.interaction)
   const liveHistoryByUser = loadLiveHistoryByUser(saved)
   const liveDailyStatsByUser = normalizeLiveDailyStatsByUser(saved.liveDailyStatsByUser)
   const liveTimerByUser = normalizeLiveTimerByUser(saved.liveTimerByUser)
@@ -472,6 +724,16 @@ function defaultState() {
       progress: "",
       dateRangeStart: savedGiftStats.dateRangeStart || "",
       dateRangeEnd: savedGiftStats.dateRangeEnd || "",
+      sendRecords: [],
+      receiveRecords: [],
+      fetchedAt: 0,
+      cacheRangeStart: 0,
+      cacheRangeEnd: 0,
+      cacheComplete: false,
+      pagesRead: 0,
+      totalRecords: 0,
+      limited: false,
+      limitReason: "",
       sendAcoinTotal: 0,
       receiveDiamondTotal: 0,
       receivePeachTotal: 0,
@@ -566,6 +828,39 @@ function defaultState() {
     progress: "",
     eventsBound: false,
     activeTab: "account",
+    interaction: {
+      lottery: {
+        active: false,
+        keyword: savedInteraction.lottery.keyword,
+        winnerCount: savedInteraction.lottery.winnerCount,
+        uniqueByUser: savedInteraction.lottery.uniqueByUser,
+        participants: [],
+        winners: [],
+        history: [],
+        recent: [],
+      },
+      songRequest: {
+        active: false,
+        playbackPaused: false,
+        shuffle: false,
+        obsMode: savedInteraction.songRequest.obsMode,
+        keyword: savedInteraction.songRequest.keyword,
+        uniqueByUser: savedInteraction.songRequest.uniqueByUser,
+        maxPerUser: savedInteraction.songRequest.maxPerUser,
+        maxQueueSize: savedInteraction.songRequest.maxQueueSize,
+        adminPreviewLimit: savedInteraction.songRequest.adminPreviewLimit,
+        browserSourceName: savedInteraction.songRequest.browserSourceName,
+        browserSourceUrl: "",
+        lastBrowserSourceSyncedSourceName: "",
+        lastBrowserSourceSyncedUrl: "",
+        current: null,
+        progressSeconds: 0,
+        queue: [],
+        preplay: [],
+        played: [],
+        recent: [],
+      },
+    },
     ui: {
       theme: savedUi.theme === "dark" ? "dark" : "light",
       sidebarCollapsed: Boolean(savedUi.sidebarCollapsed),
@@ -651,6 +946,22 @@ export const useLiveStore = defineStore("live", {
           dateRangeStart: this.giftStats.dateRangeStart,
           dateRangeEnd: this.giftStats.dateRangeEnd,
         },
+        interaction: {
+          lottery: {
+            keyword: this.interaction.lottery.keyword,
+            winnerCount: this.interaction.lottery.winnerCount,
+            uniqueByUser: this.interaction.lottery.uniqueByUser,
+          },
+          songRequest: {
+            keyword: this.interaction.songRequest.keyword,
+            uniqueByUser: this.interaction.songRequest.uniqueByUser,
+            obsMode: this.interaction.songRequest.obsMode,
+            maxPerUser: this.interaction.songRequest.maxPerUser,
+            maxQueueSize: this.interaction.songRequest.maxQueueSize,
+            adminPreviewLimit: this.interaction.songRequest.adminPreviewLimit,
+            browserSourceName: this.interaction.songRequest.browserSourceName,
+          },
+        },
         overlay: this.overlay,
         obs: {
           enabled: this.obs.enabled,
@@ -685,11 +996,33 @@ export const useLiveStore = defineStore("live", {
       gs.peachRank = []
       gs.contribRank = []
     },
-    setGiftStatsDateRange(start, end) {
+    applyGiftStatsFilter() {
+      const gs = this.giftStats
+      const sendRecords = Array.isArray(gs.sendRecords) ? gs.sendRecords : []
+      const receiveRecords = Array.isArray(gs.receiveRecords) ? gs.receiveRecords : []
+      if (!gs.fetchedAt && sendRecords.length === 0 && receiveRecords.length === 0) {
+        this.resetGiftStatsResults()
+        return
+      }
+      applyGiftStatsSummary(gs, buildGiftStatsSummary(sendRecords, receiveRecords, giftStatsRange(gs)))
+      gs.loaded = true
+      gs.error = ""
+      gs.progress = ""
+    },
+    async setGiftStatsDateRange(start, end) {
       this.giftStats.dateRangeStart = start || ""
       this.giftStats.dateRangeEnd = end || ""
-      this.resetGiftStatsResults()
       this.persist()
+      const range = giftStatsRange(this.giftStats)
+      if (
+        this.isLoggedIn &&
+        !this.giftStats.loading &&
+        !isGiftStatsRangeCoveredByCache(this.giftStats, range)
+      ) {
+        await this.loadGiftStats({ automatic: false })
+        return
+      }
+      this.applyGiftStatsFilter()
     },
     toggleSidebar() {
       this.ui.sidebarCollapsed = !this.ui.sidebarCollapsed
@@ -702,6 +1035,420 @@ export const useLiveStore = defineStore("live", {
     toggleGuardianClubVisible() {
       this.ui.guardianClubVisible = !this.ui.guardianClubVisible
       this.persist()
+    },
+    setLotteryKeyword(value) {
+      this.interaction.lottery.keyword = normalizeInteractionKeyword(value, "抽奖")
+      this.persist()
+    },
+    setLotteryWinnerCount(value) {
+      this.interaction.lottery.winnerCount = clampInteger(value, 1, 20, 1)
+      this.persist()
+    },
+    setLotteryUniqueByUser(value) {
+      this.interaction.lottery.uniqueByUser = Boolean(value)
+      this.persist()
+    },
+    startLottery() {
+      this.interaction.lottery.active = true
+      this.log(`弹幕抽奖已开启：关键词「${this.interaction.lottery.keyword}」`)
+    },
+    stopLottery() {
+      this.interaction.lottery.active = false
+      this.log("弹幕抽奖已暂停")
+    },
+    clearLotteryParticipants() {
+      const lottery = this.interaction.lottery
+      lottery.participants = []
+      lottery.winners = []
+      lottery.recent = []
+    },
+    drawLotteryWinners() {
+      const lottery = this.interaction.lottery
+      const pool = Array.isArray(lottery.participants) ? lottery.participants.slice() : []
+      if (!pool.length) {
+        throw new Error("当前没有可抽取的参与者")
+      }
+      const count = Math.min(clampInteger(lottery.winnerCount, 1, 20, 1), pool.length)
+      const winners = []
+      for (let i = 0; i < count; i += 1) {
+        const index = randomIndex(pool.length)
+        winners.push(pool.splice(index, 1)[0])
+      }
+      const drawTime = Math.floor(Date.now() / 1000)
+      lottery.winners = winners.map((item, index) => ({
+        ...item,
+        rank: index + 1,
+        drawTime,
+      }))
+      lottery.history = [
+        {
+          id: `${Date.now()}-${winners.map((item) => item.id).join("-")}`,
+          time: drawTime,
+          winnerCount: winners.length,
+          participantCount: lottery.participants.length,
+          keyword: lottery.keyword,
+          winners: lottery.winners,
+        },
+        ...lottery.history,
+      ].slice(0, INTERACTION_HISTORY_LIMIT)
+      this.log(`弹幕抽奖开奖：${winners.map((item) => item.nickname).join("、")}`)
+      return lottery.winners
+    },
+    setSongRequestKeyword(value) {
+      this.interaction.songRequest.keyword = normalizeInteractionKeyword(value, "点歌")
+      this.persist()
+    },
+    setSongRequestUniqueByUser(value) {
+      this.interaction.songRequest.uniqueByUser = Boolean(value)
+      this.persist()
+    },
+    setSongRequestObsMode(value) {
+      this.interaction.songRequest.obsMode = SONG_REQUEST_OBS_MODES.has(value) ? value : "vinylPortrait"
+      this.persist()
+    },
+    setSongRequestBrowserSourceUrl(url) {
+      this.interaction.songRequest.browserSourceUrl = String(url || "").trim()
+    },
+    setSongRequestBrowserSourceName(value) {
+      this.interaction.songRequest.browserSourceName = String(value || "").trim() || "ACFun 点歌机"
+      this.persist()
+    },
+    setSongRequestMaxPerUser(value) {
+      this.interaction.songRequest.maxPerUser = clampInteger(value, 1, INTERACTION_SONG_PER_USER_LIMIT, 3)
+      this.persist()
+    },
+    setSongRequestMaxQueueSize(value) {
+      this.interaction.songRequest.maxQueueSize = clampInteger(value, 5, INTERACTION_SONG_QUEUE_LIMIT, 30)
+      this.interaction.songRequest.queue = this.interaction.songRequest.queue.slice(0, this.interaction.songRequest.maxQueueSize)
+      this.persist()
+    },
+    setSongRequestAdminPreviewLimit(value) {
+      this.interaction.songRequest.adminPreviewLimit = clampInteger(value, 5, INTERACTION_ADMIN_PREVIEW_LIMIT, 12)
+      this.persist()
+    },
+    saveSongRequestSettings(settings = {}) {
+      if (Object.prototype.hasOwnProperty.call(settings, "obsMode")) {
+        this.setSongRequestObsMode(settings.obsMode)
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "maxPerUser")) {
+        this.interaction.songRequest.maxPerUser = clampInteger(settings.maxPerUser, 1, INTERACTION_SONG_PER_USER_LIMIT, 3)
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "maxQueueSize")) {
+        this.interaction.songRequest.maxQueueSize = clampInteger(settings.maxQueueSize, 5, INTERACTION_SONG_QUEUE_LIMIT, 30)
+        this.interaction.songRequest.queue = this.interaction.songRequest.queue.slice(0, this.interaction.songRequest.maxQueueSize)
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "adminPreviewLimit")) {
+        this.interaction.songRequest.adminPreviewLimit = clampInteger(settings.adminPreviewLimit, 5, INTERACTION_ADMIN_PREVIEW_LIMIT, 12)
+      }
+      this.persist()
+      this.log("弹幕点歌设置已保存")
+    },
+    async syncSongRequestBrowserSourceUrl({
+      client = null,
+      force = false,
+      required = true,
+      silent = false,
+    } = {}) {
+      const song = this.interaction.songRequest
+      const inputName = String(song.browserSourceName || "").trim()
+      const url = String(song.browserSourceUrl || "").trim()
+      if (!inputName) {
+        if (required && !silent) {
+          throw new Error("请先填写点歌 OBS 源名称")
+        }
+        return false
+      }
+      if (!url) {
+        if (required && !silent) {
+          throw new Error("点歌 OBS 浏览器源 URL 尚未初始化")
+        }
+        return false
+      }
+      if (!client && !this.obs.connected) {
+        throw new Error("请先连接 OBS")
+      }
+      if (
+        !force
+        && song.lastBrowserSourceSyncedSourceName === inputName
+        && song.lastBrowserSourceSyncedUrl === url
+      ) {
+        return false
+      }
+      try {
+        const obs = client || await this.connectObsClient({ syncBrowserSource: false })
+        await obs.request("SetInputSettings", {
+          inputName,
+          inputSettings: { url },
+          overlay: true,
+        })
+        await obs.request("PressInputPropertiesButton", {
+          inputName,
+          propertyName: "refreshnocache",
+        })
+        this.obs.connected = true
+        this.obs.enabled = true
+        this.obs.lastError = ""
+        song.lastBrowserSourceSyncedSourceName = inputName
+        song.lastBrowserSourceSyncedUrl = url
+        this.persist()
+        this.log(`已同步并刷新点歌 OBS 源：${inputName}`)
+        return true
+      } catch (error) {
+        const message = formatError(error)
+        this.obs.lastError = message
+        this.log(`点歌 OBS 源 URL 同步或刷新失败：${message}`)
+        if (!silent) {
+          throw error
+        }
+        return false
+      }
+    },
+    startSongRequest() {
+      this.interaction.songRequest.active = true
+      this.log(`弹幕点歌已开启：关键词「${this.interaction.songRequest.keyword}」`)
+    },
+    stopSongRequest() {
+      this.interaction.songRequest.active = false
+      this.log("弹幕点歌已暂停")
+    },
+    clearSongRequestQueue() {
+      this.interaction.songRequest.queue = []
+      this.interaction.songRequest.recent = []
+    },
+    clearPlayedSongRequests() {
+      this.interaction.songRequest.played = []
+    },
+    addManualSongRequest(title, requester = "主播", options = {}) {
+      const cleanTitle = String(title || "").trim().slice(0, 80)
+      if (!cleanTitle) {
+        throw new Error("请输入歌名")
+      }
+      const added = this.addSongRequestEntry({
+        title: cleanTitle,
+        item: {
+          nickname: String(requester || "主播").trim() || "主播",
+          userId: "",
+          content: cleanTitle,
+          time: Math.floor(Date.now() / 1000),
+        },
+        manual: true,
+        ...options,
+      })
+      if (!added) {
+        throw new Error("点歌队列已满")
+      }
+      return added
+    },
+    addPreplaySongRequest(title, remark = "") {
+      const cleanTitle = String(title || "").trim().slice(0, 100)
+      if (!cleanTitle) {
+        throw new Error("请输入 YouTube 网址或关键词")
+      }
+      const entry = buildInteractionEntry({
+        nickname: "Admin",
+        userId: "",
+        content: cleanTitle,
+        time: Math.floor(Date.now() / 1000),
+      }, {
+        title: cleanTitle,
+        remark,
+        manual: true,
+        preplay: true,
+        category: normalizeSongCategory(cleanTitle),
+        url: /^https?:\/\//i.test(cleanTitle) ? cleanTitle : "",
+      })
+      this.interaction.songRequest.preplay = [
+        entry,
+        ...this.interaction.songRequest.preplay,
+      ].slice(0, INTERACTION_SONG_PREPLAY_LIMIT)
+      return entry
+    },
+    removePreplaySongRequest(id) {
+      this.interaction.songRequest.preplay = this.interaction.songRequest.preplay.filter((item) => item.id !== id)
+    },
+    enqueuePreplaySongRequest(id) {
+      const song = this.interaction.songRequest
+      const entry = song.preplay.find((item) => item.id === id)
+      if (!entry) {
+        return false
+      }
+      const added = this.addSongRequestEntry({
+        title: entry.title,
+        item: {
+          nickname: "Admin",
+          userId: "",
+          content: entry.title,
+          time: Math.floor(Date.now() / 1000),
+        },
+        manual: true,
+        remark: entry.remark,
+        category: entry.category,
+        url: entry.url,
+        durationSeconds: entry.durationSeconds,
+      })
+      if (added) {
+        this.removePreplaySongRequest(id)
+      }
+      return Boolean(added)
+    },
+    addSongRequestEntry({ title, item, manual = false }) {
+      const song = this.interaction.songRequest
+      if (song.queue.length >= song.maxQueueSize) {
+        song.recent = [
+          buildInteractionEntry(item, { action: "点歌失败", title, reason: "队列已满" }),
+          ...song.recent,
+        ].slice(0, INTERACTION_RECENT_LIMIT)
+        return false
+      }
+      const user = normalizeDanmakuUser(item)
+      if (!manual && user.userKey) {
+        const userQueueCount = song.queue.filter((entry) => entry.userKey === user.userKey).length
+        if (song.uniqueByUser && userQueueCount > 0) {
+          song.recent = [
+            buildInteractionEntry(item, { action: "点歌忽略", title, reason: "已有未播点歌" }),
+            ...song.recent,
+          ].slice(0, INTERACTION_RECENT_LIMIT)
+          return false
+        }
+        if (userQueueCount >= song.maxPerUser) {
+          song.recent = [
+            buildInteractionEntry(item, { action: "点歌拒绝", title, reason: "超过个人上限" }),
+            ...song.recent,
+          ].slice(0, INTERACTION_RECENT_LIMIT)
+          return false
+        }
+      }
+      const entry = buildInteractionEntry(item, {
+        title: String(title || "").trim().slice(0, 80),
+        userKey: user.userKey,
+        manual,
+      })
+      song.queue = [...song.queue, entry].slice(0, song.maxQueueSize)
+      song.recent = [
+        { ...entry, action: manual ? "手动加入" : "加入队列" },
+        ...song.recent,
+      ].slice(0, INTERACTION_RECENT_LIMIT)
+      return true
+    },
+    playSongRequest(id) {
+      const song = this.interaction.songRequest
+      let entry = null
+      if (id) {
+        const index = song.queue.findIndex((item) => item.id === id)
+        if (index >= 0) {
+          ;[entry] = song.queue.splice(index, 1)
+        }
+      } else if (song.shuffle && song.queue.length > 1) {
+        const index = randomIndex(song.queue.length)
+        ;[entry] = song.queue.splice(index, 1)
+      } else {
+        entry = song.queue.shift() || null
+      }
+      if (!entry) {
+        song.current = null
+        song.progressSeconds = 0
+        return null
+      }
+      song.current = {
+        ...entry,
+        startedAt: Math.floor(Date.now() / 1000),
+        durationSeconds: clampInteger(entry.durationSeconds, 30, 7200, estimateSongDuration(entry.title)),
+      }
+      song.progressSeconds = 0
+      song.playbackPaused = false
+      return song.current
+    },
+    pauseSongPlayback() {
+      this.interaction.songRequest.playbackPaused = true
+    },
+    resumeSongPlayback() {
+      this.interaction.songRequest.playbackPaused = false
+    },
+    toggleSongShuffle() {
+      this.interaction.songRequest.shuffle = !this.interaction.songRequest.shuffle
+    },
+    replayCurrentSong() {
+      const song = this.interaction.songRequest
+      if (!song.current) {
+        return
+      }
+      song.current = { ...song.current, startedAt: Math.floor(Date.now() / 1000) }
+      song.progressSeconds = 0
+      song.playbackPaused = false
+    },
+    skipCurrentSong() {
+      const song = this.interaction.songRequest
+      if (song.current) {
+        song.played = [{ ...song.current, playedAt: Math.floor(Date.now() / 1000), skipped: true }, ...song.played].slice(0, INTERACTION_HISTORY_LIMIT)
+      }
+      return this.playSongRequest()
+    },
+    closeSongRequestSystem() {
+      const song = this.interaction.songRequest
+      song.active = false
+      song.current = null
+      song.progressSeconds = 0
+      song.playbackPaused = false
+      this.log("弹幕点歌系统已关闭")
+    },
+    markSongRequestPlayed(id) {
+      const song = this.interaction.songRequest
+      if (song.current && song.current.id === id) {
+        song.played = [{ ...song.current, playedAt: Math.floor(Date.now() / 1000) }, ...song.played].slice(0, INTERACTION_HISTORY_LIMIT)
+        song.current = null
+        song.progressSeconds = 0
+        return
+      }
+      const index = song.queue.findIndex((item) => item.id === id)
+      if (index < 0) {
+        return
+      }
+      const [entry] = song.queue.splice(index, 1)
+      song.played = [{ ...entry, playedAt: Math.floor(Date.now() / 1000) }, ...song.played].slice(0, INTERACTION_HISTORY_LIMIT)
+    },
+    removeSongRequest(id) {
+      const song = this.interaction.songRequest
+      song.queue = song.queue.filter((item) => item.id !== id)
+    },
+    moveSongRequest(id, direction) {
+      const song = this.interaction.songRequest
+      const index = song.queue.findIndex((item) => item.id === id)
+      if (index < 0) {
+        return
+      }
+      const nextIndex = direction < 0 ? index - 1 : index + 1
+      if (nextIndex < 0 || nextIndex >= song.queue.length) {
+        return
+      }
+      const queue = song.queue.slice()
+      const [entry] = queue.splice(index, 1)
+      queue.splice(nextIndex, 0, entry)
+      song.queue = queue
+    },
+    handleInteractionDanmaku(item) {
+      if (!isPlainTextDanmaku(item)) {
+        return
+      }
+      const content = normalizeDanmakuContent(item)
+      const lottery = this.interaction.lottery
+      if (lottery.active && lotteryKeywordMatched(content, lottery.keyword)) {
+        const user = normalizeDanmakuUser(item)
+        const duplicate = lottery.uniqueByUser
+          ? lottery.participants.some((entry) => entry.userKey === user.userKey)
+          : lottery.participants.some((entry) => entry.sourceId && entry.sourceId === (item.id || item.uniqueId))
+        if (!duplicate) {
+          const entry = buildInteractionEntry(item, { userKey: user.userKey })
+          lottery.participants = [entry, ...lottery.participants].slice(0, 1000)
+          lottery.recent = [{ ...entry, action: "参与抽奖" }, ...lottery.recent].slice(0, INTERACTION_RECENT_LIMIT)
+        }
+      }
+      const song = this.interaction.songRequest
+      if (song.active) {
+        const title = extractSongTitle(content, song.keyword)
+        if (title) {
+          this.addSongRequestEntry({ title, item })
+        }
+      }
     },
     // 把 liveHistoryByUser[当前 userId] 加载到 this.liveHistory（账号切换时调用）
     loadHistoryForCurrentUser() {
@@ -1293,6 +2040,9 @@ export const useLiveStore = defineStore("live", {
               blockList: this.room.blockList,
             })
           }
+          if (!isRecent) {
+            this.handleInteractionDanmaku(item)
+          }
         }
       })
       this.room.danmakuList = this.room.danmakuList.slice(0, 300)
@@ -1489,77 +2239,82 @@ export const useLiveStore = defineStore("live", {
       return data
     },
     // 拉取并聚合礼物统计（送出/收到记录，分页 pcursor）
-    async loadGiftStats() {
+    async loadGiftStats(options = {}) {
       const gs = this.giftStats
+      const automatic = Boolean(options.automatic)
+      const startedAt = Date.now()
+      const stats = {
+        pages: 0,
+        records: 0,
+        limited: false,
+        limitReason: "",
+      }
+      const limitBy = (reason) => {
+        stats.limited = true
+        stats.limitReason = reason
+      }
       gs.loading = true
       gs.error = ""
+      gs.limited = false
+      gs.limitReason = ""
       gs.progress = "准备中…"
       try {
         await this.ensureBackendToken()
-        const range = giftStatsRange(gs)
-        const fetchAll = async (kind, onPage) => {
+        const fetchAll = async (kind) => {
+          const allRecords = []
           let pcursor = "0"
           let pages = 0
-          while (pcursor !== "no_more" && pages < 300) {
+          while (pcursor !== "no_more" && pages < GIFT_STATS_FULL_PAGE_LIMIT) {
+            if (automatic && stats.pages >= GIFT_STATS_AUTO_PAGE_LIMIT) {
+              limitBy(`自动统计已暂停：已读取 ${GIFT_STATS_AUTO_PAGE_LIMIT} 页`)
+              break
+            }
+            if (automatic && stats.records >= GIFT_STATS_AUTO_RECORD_LIMIT) {
+              limitBy(`自动统计已暂停：已读取 ${GIFT_STATS_AUTO_RECORD_LIMIT} 条记录`)
+              break
+            }
+            if (automatic && Date.now() - startedAt >= GIFT_STATS_AUTO_TIME_LIMIT_MS) {
+              limitBy("自动统计已暂停：读取时间超过 8 秒")
+              break
+            }
             const data = await this.request(BackendTypes.GET_REWARD_RECORDS, { kind, pcursor })
             const records = Array.isArray(data?.records) ? data.records : []
-            records.forEach((record) => {
-              if (isGiftRecordInRange(record, range)) {
-                onPage(record)
-              }
-            })
+            allRecords.push(...records)
             pcursor = data?.pcursor || "no_more"
             pages += 1
+            stats.pages += 1
+            stats.records += records.length
             gs.progress = `${kind === "give" ? "送出" : "收到"}记录已读取 ${pages} 页…`
             if (records.length === 0 && pcursor !== "no_more") break
           }
+          if (pcursor !== "no_more" && pages >= GIFT_STATS_FULL_PAGE_LIMIT) {
+            limitBy(`已达到单类记录 ${GIFT_STATS_FULL_PAGE_LIMIT} 页安全上限`)
+          }
+          return allRecords
         }
 
-        const sendMap = new Map()
-        const recvMap = new Map()
-        let sendAcoinTotal = 0
-        let receiveDiamondTotal = 0
-        let receivePeachTotal = 0
+        const sendRecords = await fetchAll("give")
+        const receiveRecords = automatic && stats.limited ? [] : await fetchAll("receive")
 
-        const touch = (map, r) => {
-          const uid = String(r.userId)
-          let u = map.get(uid)
-          if (!u) {
-            u = { uid, userName: r.userName || uid, acoin: 0, diamond: 0, peach: 0 }
-            map.set(uid, u)
-          }
-          if (!u.userName && r.userName) u.userName = r.userName
-          return u
-        }
-
-        await fetchAll("give", (r) => {
-          const acoin = Number(r.acoin) || 0
-          sendAcoinTotal += acoin
-          touch(sendMap, r).acoin += acoin
-        })
-
-        await fetchAll("receive", (r) => {
-          const u = touch(recvMap, r)
-          if (r.giftName === "桃子") {
-            const peach = Number(r.giftCount) || 0
-            u.peach += peach
-            receivePeachTotal += peach
-          } else {
-            const diamond = Number(r.azuanAmount) || 0
-            u.diamond += diamond
-            receiveDiamondTotal += diamond
-          }
-        })
-
-        gs.sendAcoinTotal = sendAcoinTotal
-        gs.receiveDiamondTotal = receiveDiamondTotal
-        gs.receivePeachTotal = receivePeachTotal
-        gs.sendRank = [...sendMap.values()].filter((u) => u.acoin > 0).sort((a, b) => b.acoin - a.acoin).slice(0, 100)
-        gs.peachRank = [...recvMap.values()].filter((u) => u.peach > 0).sort((a, b) => b.peach - a.peach).slice(0, 100)
-        gs.contribRank = [...recvMap.values()].filter((u) => u.diamond > 0).sort((a, b) => b.diamond - a.diamond).slice(0, 100)
-        gs.loaded = true
+        gs.sendRecords = sendRecords
+        gs.receiveRecords = receiveRecords
+        gs.fetchedAt = Date.now()
+        gs.cacheRangeStart = giftStatsCacheStart(sendRecords, receiveRecords)
+        gs.cacheRangeEnd = minuteEndTimestamp(gs.fetchedAt)
+        gs.cacheComplete = !stats.limited
+        gs.pagesRead = stats.pages
+        gs.totalRecords = stats.records
+        gs.limited = stats.limited
+        gs.limitReason = stats.limitReason
+        this.applyGiftStatsFilter()
         gs.progress = ""
-        this.log(`礼物统计完成：送出 ${sendAcoinTotal} AC币，收到 ${receiveDiamondTotal} 钻石`)
+        this.log(`礼物统计完成：送出 ${gs.sendAcoinTotal} AC币，收到 ${gs.receiveDiamondTotal} 钻石${gs.limited ? "（自动暂停）" : ""}`)
+        return {
+          limited: gs.limited,
+          limitReason: gs.limitReason,
+          totalRecords: gs.totalRecords,
+          pagesRead: gs.pagesRead,
+        }
       } catch (error) {
         gs.error = formatError(error)
         this.log(`礼物统计失败：${gs.error}`)

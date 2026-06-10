@@ -10,6 +10,10 @@ export function BroadcastOverlayStyle(arg1) {
   return window['go']['main']['App']['BroadcastOverlayStyle'](arg1);
 }
 
+export function BroadcastSongRequestOverlay(arg1) {
+  return window['go']['main']['App']['BroadcastSongRequestOverlay'](arg1);
+}
+
 export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
@@ -52,6 +56,10 @@ export function GetSharedFloatState() {
 
 export function GetSharedTheme() {
   return window['go']['main']['App']['GetSharedTheme']();
+}
+
+export function GetSongRequestOverlayUrl() {
+  return window['go']['main']['App']['GetSongRequestOverlayUrl']();
 }
 
 export function GetSystemFonts() {

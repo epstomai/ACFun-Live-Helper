@@ -53,6 +53,11 @@ export async function getOverlayBaseUrl() {
   return app && app.GetOverlayBaseUrl ? app.GetOverlayBaseUrl() : ""
 }
 
+export async function getSongRequestOverlayUrl() {
+  const app = wailsApp()
+  return app && app.GetSongRequestOverlayUrl ? app.GetSongRequestOverlayUrl() : ""
+}
+
 export async function getBackendPort() {
   const app = wailsApp()
   return app && app.GetBackendPort ? app.GetBackendPort() : 0
@@ -203,6 +208,14 @@ export async function broadcastOverlayStyle(payload) {
   const app = wailsApp()
   if (app && app.BroadcastOverlayStyle) {
     return app.BroadcastOverlayStyle(String(payload || ""))
+  }
+  return undefined
+}
+
+export async function broadcastSongRequestOverlay(payload) {
+  const app = wailsApp()
+  if (app && app.BroadcastSongRequestOverlay) {
+    return app.BroadcastSongRequestOverlay(String(payload || ""))
   }
   return undefined
 }

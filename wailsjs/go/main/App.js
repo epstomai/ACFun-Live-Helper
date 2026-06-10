@@ -6,6 +6,10 @@ export function AppendLog(arg1) {
   return window['go']['main']['App']['AppendLog'](arg1);
 }
 
+export function BroadcastSongRequestOverlay(arg1) {
+  return window['go']['main']['App']['BroadcastSongRequestOverlay'](arg1);
+}
+
 export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
@@ -28,6 +32,10 @@ export function GetLogPath() {
 
 export function GetOverlayBaseUrl() {
   return window['go']['main']['App']['GetOverlayBaseUrl']();
+}
+
+export function GetSongRequestOverlayUrl() {
+  return window['go']['main']['App']['GetSongRequestOverlayUrl']();
 }
 
 export function OpenCoverFile() {

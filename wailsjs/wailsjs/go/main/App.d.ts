@@ -6,6 +6,8 @@ export function AppendLog(arg1:string):Promise<void>;
 
 export function BroadcastOverlayStyle(arg1:string):Promise<void>;
 
+export function BroadcastSongRequestOverlay(arg1:string):Promise<void>;
+
 export function CheckForUpdate():Promise<main.UpdateInfo>;
 
 export function CopyText(arg1:string):Promise<void>;
@@ -27,6 +29,8 @@ export function GetOverlayBaseUrl():Promise<string>;
 export function GetSharedFloatState():Promise<string>;
 
 export function GetSharedTheme():Promise<string>;
+
+export function GetSongRequestOverlayUrl():Promise<string>;
 
 export function GetSystemFonts():Promise<Array<string>>;
 

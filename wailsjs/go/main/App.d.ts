@@ -3,6 +3,8 @@
 
 export function AppendLog(arg1:string):Promise<void>;
 
+export function BroadcastSongRequestOverlay(arg1:string):Promise<void>;
+
 export function CheckForUpdate():Promise<any>;
 
 export function CopyText(arg1:string):Promise<void>;
@@ -14,6 +16,8 @@ export function GetBackendPort():Promise<number>;
 export function GetLogPath():Promise<string>;
 
 export function GetOverlayBaseUrl():Promise<string>;
+
+export function GetSongRequestOverlayUrl():Promise<string>;
 
 export function OpenCoverFile():Promise<string>;
 

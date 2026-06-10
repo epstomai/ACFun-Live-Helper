@@ -1105,6 +1105,409 @@
         </div>
       </section>
 
+      <!-- 互动玩法 -->
+      <section v-if="store.activeTab === 'interaction'" class="interaction-grid">
+        <div class="panel wide">
+          <div class="panel-head">
+            <h3>互动玩法</h3>
+            <div class="row-actions">
+              <button class="command" @click="run(() => store.startDanmu({ restart: true }), '弹幕监听已重连')">
+                <Radio :size="16" /><span>重连弹幕</span>
+              </button>
+            </div>
+          </div>
+          <div class="metrics interaction-overview">
+            <template v-if="interactionSubTab === 'lottery'">
+              <div><strong>{{ store.interaction.lottery.active ? "进行中" : "已暂停" }}</strong><span>抽奖</span></div>
+              <div><strong>{{ store.interaction.lottery.participants.length }}</strong><span>参与人数</span></div>
+              <div><strong>{{ store.interaction.lottery.winners.length }}</strong><span>中奖人数</span></div>
+            </template>
+            <template v-else>
+              <div><strong>{{ store.interaction.songRequest.active ? "开放中" : "已暂停" }}</strong><span>点歌</span></div>
+              <div><strong>{{ store.interaction.songRequest.queue.length }}</strong><span>排队歌曲</span></div>
+              <div><strong>{{ store.interaction.songRequest.played.length }}</strong><span>已唱</span></div>
+            </template>
+          </div>
+          <div class="interaction-subtabs" role="tablist" aria-label="互动玩法子功能">
+            <button
+              v-for="tab in interactionTabs"
+              :key="tab.id"
+              class="interaction-subtab"
+              :class="{ active: interactionSubTab === tab.id }"
+              type="button"
+              role="tab"
+              :aria-selected="interactionSubTab === tab.id"
+              @click="interactionSubTab = tab.id"
+            >
+              <component :is="tab.icon" :size="15" />
+              <span>{{ tab.label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="interactionSubTab === 'lottery'" class="panel interaction-tool-panel wide">
+          <div class="panel-head">
+            <h3>弹幕抽奖</h3>
+            <span :class="['interaction-state', { active: store.interaction.lottery.active }]">
+              {{ store.interaction.lottery.active ? "收集中" : "未开启" }}
+            </span>
+          </div>
+          <div class="form-grid interaction-form">
+            <label>
+              <span>关键词</span>
+              <input
+                :value="store.interaction.lottery.keyword"
+                maxlength="20"
+                @change="store.setLotteryKeyword($event.target.value)"
+              />
+            </label>
+            <label>
+              <span>中奖人数</span>
+              <input
+                :value="store.interaction.lottery.winnerCount"
+                type="number"
+                min="1"
+                max="20"
+                @change="store.setLotteryWinnerCount($event.target.value)"
+              />
+            </label>
+          </div>
+          <div class="toggle-row interaction-toggle-row">
+            <label class="checkbox-label">
+              <input
+                :checked="store.interaction.lottery.uniqueByUser"
+                type="checkbox"
+                @change="store.setLotteryUniqueByUser($event.target.checked)"
+              />
+              <span>同一用户只参与一次</span>
+            </label>
+          </div>
+          <div class="button-row">
+            <button
+              class="command"
+              :class="{ primary: !store.interaction.lottery.active }"
+              @click="toggleLottery"
+            >
+              <component :is="store.interaction.lottery.active ? Square : Play" :size="16" />
+              <span>{{ store.interaction.lottery.active ? "暂停收集" : "开始收集" }}</span>
+            </button>
+            <button
+              class="command primary"
+              :disabled="!store.interaction.lottery.participants.length"
+              @click="drawLottery"
+            >
+              <Trophy :size="16" /><span>开奖</span>
+            </button>
+            <button class="command" @click="store.clearLotteryParticipants">
+              <Trash2 :size="16" /><span>清空名单</span>
+            </button>
+          </div>
+
+          <div v-if="store.interaction.lottery.winners.length" class="winner-strip">
+            <article v-for="winner in store.interaction.lottery.winners" :key="winner.id" class="winner-card">
+              <span>#{{ winner.rank }}</span>
+              <strong>{{ winner.nickname }}</strong>
+              <small>{{ winner.userId ? `UID ${winner.userId}` : "匿名用户" }}</small>
+            </article>
+          </div>
+
+          <div class="interaction-lists two-cols">
+            <div>
+              <div class="interaction-list-head">
+                <strong>参与名单</strong>
+                <span>{{ store.interaction.lottery.participants.length }}</span>
+              </div>
+              <div class="compact-list interaction-list">
+                <article
+                  v-for="item in store.interaction.lottery.participants.slice(0, 80)"
+                  :key="item.id"
+                  class="compact-item interaction-user-item"
+                >
+                  <div>
+                    <strong>{{ item.nickname }}</strong>
+                    <span>{{ formatTime(item.time) }} · {{ item.content }}</span>
+                  </div>
+                  <span class="tag">{{ item.userId || "匿名" }}</span>
+                </article>
+                <div v-if="!store.interaction.lottery.participants.length" class="empty-state compact-empty">等待弹幕参与</div>
+              </div>
+            </div>
+            <div>
+              <div class="interaction-list-head">
+                <strong>开奖历史</strong>
+                <span>{{ store.interaction.lottery.history.length }}</span>
+              </div>
+              <div class="compact-list interaction-list">
+                <article
+                  v-for="record in store.interaction.lottery.history"
+                  :key="record.id"
+                  class="compact-item interaction-history-item"
+                >
+                  <div>
+                    <strong>{{ record.winners.map((item) => item.nickname).join("、") }}</strong>
+                    <span>{{ formatTime(record.time) }} · {{ record.participantCount }} 人参与</span>
+                  </div>
+                  <span class="tag">{{ record.keyword }}</span>
+                </article>
+                <div v-if="!store.interaction.lottery.history.length" class="empty-state compact-empty">暂无开奖记录</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <template v-else>
+        <div class="panel interaction-tool-panel song-control-panel wide">
+          <div class="panel-head">
+            <h3>弹幕点歌</h3>
+            <span :class="['interaction-state', { active: store.interaction.songRequest.active }]">
+              {{ store.interaction.songRequest.active ? "接收中" : "未开启" }}
+            </span>
+          </div>
+          <div class="song-dashboard-grid">
+            <section class="song-now-playing" :class="[`mode-${store.interaction.songRequest.obsMode}`, { empty: !currentSongRequest }]">
+              <div class="song-now-visual">
+                <Disc :size="26" />
+              </div>
+              <div class="song-now-main">
+                <span>当前播放</span>
+                <strong>{{ currentSongRequest ? currentSongRequest.title : "暂无当前歌曲" }}</strong>
+                <small>{{ currentSongRequester }} · {{ songObsModeLabel }}</small>
+                <div class="song-tag-row">
+                  <span class="tag"><Tag :size="11" />{{ currentSongCategory }}</span>
+                  <span v-if="currentSongRequest?.remark" class="tag">{{ currentSongRequest.remark }}</span>
+                </div>
+                <div class="song-progress">
+                  <span :style="{ width: currentSongProgressPercent }"></span>
+                </div>
+                <div class="song-time-row">
+                  <span>{{ formatDuration(currentSongProgress) }}</span>
+                  <span>{{ formatDuration(currentSongDuration) }}</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="song-control-stack">
+              <div class="song-control-buttons">
+                <button class="command" :disabled="!currentSongRequest" @click="toggleSongPlaybackPause">
+                  <component :is="store.interaction.songRequest.playbackPaused ? Play : Pause" :size="16" />
+                  <span>{{ store.interaction.songRequest.playbackPaused ? "继续播放" : "暂停播放" }}</span>
+                </button>
+                <button class="command" :disabled="!currentSongRequest && !store.interaction.songRequest.queue.length" @click="skipSongRequest">
+                  <StepForward :size="16" /><span>跳过</span>
+                </button>
+                <button class="command" :disabled="!currentSongRequest" @click="replaySongRequest">
+                  <Repeat :size="16" /><span>重播</span>
+                </button>
+                <button class="command" :class="{ primary: store.interaction.songRequest.shuffle }" @click="toggleSongShuffle">
+                  <Shuffle :size="16" /><span>随机</span>
+                </button>
+                <button class="command danger" @click="closeSongRequestSystem">
+                  <Power :size="16" /><span>关闭点歌</span>
+                </button>
+              </div>
+              <div class="button-row">
+                <button
+                  class="command"
+                  :class="{ primary: !store.interaction.songRequest.active }"
+                  @click="toggleSongRequest"
+                >
+                  <component :is="store.interaction.songRequest.active ? Square : Play" :size="16" />
+                  <span>{{ store.interaction.songRequest.active ? "暂停接收" : "开放点歌" }}</span>
+                </button>
+                <button class="command primary" :disabled="!nextSongRequest" @click="playNextSongRequest">
+                  <PlayCircle :size="16" /><span>播放下一首</span>
+                </button>
+                <button class="command" @click="store.clearSongRequestQueue">
+                  <Trash2 :size="16" /><span>清空观众队列</span>
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="panel interaction-tool-panel song-settings-panel">
+          <div class="panel-head">
+            <h3>OBS 画面呈现</h3>
+            <MonitorPlay :size="16" />
+          </div>
+          <label class="block-label">
+            <span>点歌 OBS 浏览器源</span>
+            <div class="inline-input">
+              <input :value="store.interaction.songRequest.browserSourceUrl || songRequestOverlayUrl" readonly />
+              <button class="icon-button" title="复制点歌 OBS 源 URL" @click="copy(store.interaction.songRequest.browserSourceUrl || songRequestOverlayUrl)">
+                <Clipboard :size="16" />
+              </button>
+              <button class="icon-button" title="同步到 OBS" @click="syncSongRequestObsSource">
+                <MonitorPlay :size="16" />
+              </button>
+            </div>
+          </label>
+          <label>
+            <span>OBS 源名称</span>
+            <input
+              :value="store.interaction.songRequest.browserSourceName"
+              @change="store.setSongRequestBrowserSourceName($event.target.value)"
+            />
+          </label>
+          <div class="song-mode-grid">
+            <button
+              v-for="mode in songRequestObsModes"
+              :key="mode.id"
+              class="song-mode-button"
+              :class="{ active: store.interaction.songRequest.obsMode === mode.id }"
+              type="button"
+              @click="store.setSongRequestObsMode(mode.id)"
+            >
+              <component :is="mode.icon" :size="18" />
+              <span>{{ mode.label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="panel interaction-tool-panel song-settings-panel">
+          <div class="panel-head">
+            <h3>点歌秩序规则</h3>
+            <ShieldCog :size="16" />
+          </div>
+          <div class="form-grid song-safety-grid">
+            <label>
+              <span>弹幕关键词</span>
+              <input :value="store.interaction.songRequest.keyword" maxlength="20" @change="store.setSongRequestKeyword($event.target.value)" />
+            </label>
+            <label>
+              <span>每位观众待播上限</span>
+              <input :value="store.interaction.songRequest.maxPerUser" type="number" min="1" max="20" @change="store.setSongRequestMaxPerUser($event.target.value)" />
+            </label>
+            <label>
+              <span>待播队列容量</span>
+              <input :value="store.interaction.songRequest.maxQueueSize" type="number" min="5" max="100" @change="store.setSongRequestMaxQueueSize($event.target.value)" />
+            </label>
+            <label>
+              <span>管理台展示条数</span>
+              <input :value="store.interaction.songRequest.adminPreviewLimit" type="number" min="5" max="50" @change="store.setSongRequestAdminPreviewLimit($event.target.value)" />
+            </label>
+          </div>
+          <div class="toggle-row interaction-toggle-row">
+            <label class="checkbox-label">
+              <input
+                :checked="store.interaction.songRequest.uniqueByUser"
+                type="checkbox"
+                @change="store.setSongRequestUniqueByUser($event.target.checked)"
+              />
+              <span>同一观众只保留一首待播歌</span>
+            </label>
+          </div>
+          <button class="command primary" @click="saveSongRequestSettings">
+            <Save :size="16" /><span>保存规则</span>
+          </button>
+        </div>
+
+        <div class="panel interaction-tool-panel wide">
+          <div class="panel-head">
+            <h3>预播清单</h3>
+            <span>{{ store.interaction.songRequest.preplay.length }} 首</span>
+          </div>
+          <div class="preplay-add-row">
+            <input v-model="preplaySongInput" placeholder="YouTube 网址或关键词" @keyup.enter="addPreplaySong" />
+            <input v-model="preplaySongRemark" placeholder="新增备注" @keyup.enter="addPreplaySong" />
+            <button class="command primary" @click="addPreplaySong">
+              <ListPlus :size="16" /><span>新增预播</span>
+            </button>
+          </div>
+          <div class="compact-list interaction-list preplay-list">
+            <article v-for="item in store.interaction.songRequest.preplay" :key="item.id" class="song-request-item">
+              <span class="rank-badge"><ListMusic :size="13" /></span>
+              <div class="song-request-main">
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.remark || item.category }} · {{ formatTime(item.time) }}</span>
+              </div>
+              <div class="row-actions">
+                <button class="small-icon" title="加入观众队列" @click="enqueuePreplaySong(item.id)">
+                  <Play :size="14" />
+                </button>
+                <button class="small-icon danger" title="移除预播歌曲" @click="store.removePreplaySongRequest(item.id)">
+                  <X :size="14" />
+                </button>
+              </div>
+            </article>
+            <div v-if="!store.interaction.songRequest.preplay.length" class="empty-state compact-empty">暂无预播歌曲</div>
+          </div>
+        </div>
+
+        <div class="panel interaction-tool-panel wide">
+          <div class="panel-head">
+            <h3>观众点播清单</h3>
+            <span>{{ store.interaction.songRequest.queue.length }}/{{ store.interaction.songRequest.maxQueueSize }}</span>
+          </div>
+          <div class="manual-song-row">
+            <input v-model="manualSongTitle" placeholder="YouTube 网址或歌名关键词" @keyup.enter="addManualSong" />
+            <input v-model="manualSongRequester" placeholder="点歌人" @keyup.enter="addManualSong" />
+            <input v-model="manualSongRemark" placeholder="备注 / 标签" @keyup.enter="addManualSong" />
+            <button class="command" @click="addManualSong">
+              <Music2 :size="16" /><span>手动加入</span>
+            </button>
+          </div>
+
+          <div class="interaction-lists two-cols">
+            <div>
+              <div class="interaction-list-head">
+                <strong>观众队列</strong>
+                <span>{{ adminSongQueue.length }} / {{ store.interaction.songRequest.adminPreviewLimit }}</span>
+              </div>
+              <div class="compact-list interaction-list song-queue-list">
+                <article
+                  v-for="(item, index) in adminSongQueue"
+                  :key="item.id"
+                  class="song-request-item"
+                >
+                  <span class="rank-badge">{{ index + 1 }}</span>
+                  <div class="song-request-main">
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.nickname }} · {{ item.category }} · {{ formatTime(item.time) }}</span>
+                  </div>
+                  <div class="row-actions">
+                    <button class="small-icon" title="立即播放" @click="playSongRequest(item.id)">
+                      <Play :size="14" />
+                    </button>
+                    <button class="small-icon" title="上移" :disabled="index === 0" @click="store.moveSongRequest(item.id, -1)">
+                      <ChevronUp :size="14" />
+                    </button>
+                    <button class="small-icon" title="下移" :disabled="index === store.interaction.songRequest.queue.length - 1" @click="store.moveSongRequest(item.id, 1)">
+                      <ChevronDown :size="14" />
+                    </button>
+                    <button class="small-icon danger" title="删除单首点播歌曲" @click="store.removeSongRequest(item.id)">
+                      <X :size="14" />
+                    </button>
+                  </div>
+                </article>
+                <div v-if="!store.interaction.songRequest.queue.length" class="empty-state compact-empty">等待观众点歌</div>
+              </div>
+            </div>
+            <div>
+              <div class="interaction-list-head">
+                <strong>已唱列表</strong>
+                <span>{{ store.interaction.songRequest.played.length }}</span>
+              </div>
+              <div class="compact-list interaction-list">
+                <article
+                  v-for="item in store.interaction.songRequest.played"
+                  :key="`${item.id}-${item.playedAt}`"
+                  class="compact-item interaction-history-item"
+                >
+                  <div>
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.nickname }} · {{ item.skipped ? "已跳过" : "已唱" }} · {{ formatTime(item.playedAt) }}</span>
+                  </div>
+                  <span class="tag">{{ item.category || "点播" }}</span>
+                </article>
+                <div v-if="!store.interaction.songRequest.played.length" class="empty-state compact-empty">暂无已唱歌曲</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        </template>
+      </section>
+
       <!-- OBS 弹幕源 -->
       <section v-if="store.activeTab === 'overlay'" class="overlay-grid">
         <div class="panel wide">
@@ -1334,50 +1737,110 @@
 
       <!-- 礼物统计 -->
       <section v-if="store.activeTab === 'gift'" class="gift-grid">
-        <div class="panel">
+        <div class="panel gift-stats-panel" :class="{ 'picker-open': giftDatePickerOpen }">
           <div class="panel-head">
             <h3>礼物统计</h3>
             <div class="row-actions">
-              <button class="command primary gift-refresh-button" :disabled="store.giftStats.loading || !store.isLoggedIn" @click="run(() => store.loadGiftStats(), '礼物统计已更新')">
-                <RefreshCw :size="16" /><span>{{ store.giftStats.loading ? "统计中…" : (store.giftStats.loaded ? "重新统计" : "开始统计") }}</span>
+              <button class="command primary" :disabled="store.giftStats.loading || !store.isLoggedIn" @click="loadGiftStatsManually">
+                <RefreshCw :size="16" /><span>{{ giftStatsRefreshLabel }}</span>
               </button>
             </div>
           </div>
           <div class="gift-filter-panel">
-            <div class="gift-date-range-control">
-              <span>时间范围</span>
-              <input
-                :value="store.giftStats.dateRangeStart"
-                type="datetime-local"
-                aria-label="礼物统计起始时间"
-                @change="setGiftDateRange($event.target.value, store.giftStats.dateRangeEnd)"
-              />
-              <span class="gift-date-separator">至</span>
-              <input
-                :value="store.giftStats.dateRangeEnd"
-                type="datetime-local"
-                aria-label="礼物统计结束时间"
-                @change="setGiftDateRange(store.giftStats.dateRangeStart, $event.target.value)"
-              />
-            </div>
-            <div class="gift-preset-row">
+            <div ref="giftDatePickerRef" class="gift-date-range-picker" :class="{ open: giftDatePickerOpen }">
               <button
-                v-for="preset in giftDatePresets"
-                :key="preset.id"
-                class="gift-preset-button"
+                class="gift-date-range-trigger"
                 type="button"
-                :title="preset.title"
-                @click="setGiftDatePreset(preset.id)"
+                :aria-expanded="giftDatePickerOpen"
+                aria-haspopup="dialog"
+                @click="toggleGiftDateRangePicker"
               >
-                {{ preset.label }}
+                <CalendarRange :size="16" />
+                <span class="gift-date-range-trigger-copy">
+                  <span>时间范围</span>
+                  <strong>{{ giftDateRangeText }}</strong>
+                </span>
+                <ChevronDown :size="16" class="gift-date-range-chevron" />
               </button>
+              <div v-if="giftDatePickerOpen" class="gift-date-range-popover" role="dialog" aria-label="礼物统计时间范围" @keydown.escape.stop="closeGiftDateRangePicker">
+                <div class="gift-preset-row">
+                  <button
+                    v-for="preset in giftDatePresets"
+                    :key="preset.id"
+                    class="gift-preset-button"
+                    type="button"
+                    :title="preset.title"
+                    @click="applyGiftDatePreset(preset.id)"
+                  >
+                    {{ preset.label }}
+                  </button>
+                </div>
+                <div class="gift-range-picker-body">
+                  <section class="gift-calendar-panel">
+                    <div class="gift-calendar-head">
+                      <button class="small-icon" type="button" title="上个月" @click="shiftGiftDatePickerMonth(-1)">
+                        <ChevronLeft :size="15" />
+                      </button>
+                      <strong>{{ giftDatePickerMonthLabel }}</strong>
+                      <button class="small-icon" type="button" title="下个月" @click="shiftGiftDatePickerMonth(1)">
+                        <ChevronRight :size="15" />
+                      </button>
+                    </div>
+                    <div class="gift-calendar-weekdays">
+                      <span v-for="weekday in giftRangeWeekdays" :key="weekday">{{ weekday }}</span>
+                    </div>
+                    <div class="gift-calendar-days">
+                      <button
+                        v-for="day in giftRangeCalendarDays"
+                        :key="day.key"
+                        class="gift-calendar-day"
+                        :class="giftRangeDayClass(day)"
+                        type="button"
+                        @click="selectGiftRangeDay(day)"
+                      >
+                        <span>{{ day.day }}</span>
+                      </button>
+                    </div>
+                  </section>
+                  <section class="gift-range-time-panel">
+                    <div class="gift-range-draft">
+                      <div>
+                        <span>起点</span>
+                        <strong>{{ giftDateDraftStartLabel }}</strong>
+                      </div>
+                      <div>
+                        <span>结束</span>
+                        <strong>{{ giftDateDraftEndLabel }}</strong>
+                      </div>
+                    </div>
+                    <div class="gift-range-time-fields">
+                      <label :class="{ disabled: !giftDateDraftStartDate }">
+                        <span>起点时间</span>
+                        <input v-model="giftDateDraftStartTime" type="time" :disabled="!giftDateDraftStartDate" />
+                      </label>
+                      <label :class="{ disabled: !giftDateDraftEndDate }">
+                        <span>结束时间</span>
+                        <input v-model="giftDateDraftEndTime" type="time" :disabled="!giftDateDraftEndDate" />
+                      </label>
+                    </div>
+                    <div class="gift-date-range-actions">
+                      <button class="command" type="button" @click="clearGiftDateDraft">清除</button>
+                      <button class="command" type="button" @click="closeGiftDateRangePicker">取消</button>
+                      <button class="command primary" type="button" @click="applyGiftDateDraft">应用</button>
+                    </div>
+                  </section>
+                </div>
+              </div>
             </div>
           </div>
           <div v-if="!store.isLoggedIn" class="empty-state compact-empty">请先在「账号」登录后再统计。</div>
           <div v-else-if="store.giftStats.loading" class="empty-state compact-empty">{{ store.giftStats.progress || "正在拉取礼物记录…" }}</div>
           <div v-else-if="store.giftStats.error" class="empty-state compact-empty text-red">统计失败：{{ store.giftStats.error }}</div>
-          <div v-else-if="!store.giftStats.loaded" class="empty-state compact-empty">点击「开始统计」拉取你的送出/收到礼物记录。</div>
+          <div v-else-if="!store.giftStats.loaded" class="empty-state compact-empty">打开本页后会自动统计一次，也可以手动开始统计。</div>
           <template v-else>
+            <div v-if="giftStatsStatusText" class="gift-cache-status" :class="{ limited: store.giftStats.limited }">
+              {{ giftStatsStatusText }}
+            </div>
             <div class="metrics gift-overview">
               <div><strong>{{ displayCount(store.giftStats.sendAcoinTotal) }}</strong><span>送出 AC币</span></div>
               <div><strong>{{ displayCount(store.giftStats.receiveDiamondTotal) }}</strong><span>收到钻石</span></div>
@@ -1632,10 +2095,18 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import {
   Activity,
   Ban,
+  CalendarRange,
   ChartBar,
+  CheckCheck,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   Gift,
   Clipboard,
   CloudDownload,
+  Dices,
+  Disc,
   Download,
   Eye,
   EyeOff,
@@ -1645,23 +2116,30 @@ import {
   ImageUp,
   KeyRound,
   LineChart,
+  ListMusic,
+  ListPlus,
   ListTree,
   LogOut,
   Maximize2,
   Minus,
   Moon,
   MonitorPlay,
+  Music2,
   PanelLeftClose,
   PanelLeftOpen,
+  Pause,
   Play,
   PlayCircle,
   PlugZap,
+  Power,
   Unplug,
   QrCode,
   Radio,
   RefreshCw,
+  Repeat,
   Images,
   RotateCcw,
+  Save,
   Scissors,
   ScrollText,
   Send,
@@ -1693,6 +2171,12 @@ import {
   SlidersHorizontal,
   Volume2,
   Settings,
+  ShieldCog,
+  Shuffle,
+  SkipForward,
+  StepForward,
+  Tag,
+  Trophy,
 } from "@lucide/vue"
 import { useLiveStore } from "@/stores/liveStore"
 import HsvColorPicker from "@/components/HsvColorPicker.vue"
@@ -1704,7 +2188,9 @@ import {
   getBackendPort,
   getLogPath,
   getOverlayBaseUrl,
+  getSongRequestOverlayUrl,
   broadcastOverlayStyle,
+  broadcastSongRequestOverlay,
   checkForUpdate,
   downloadAndInstallUpdate,
   downloadPlaybackToFile,
@@ -2250,12 +2736,26 @@ const loginForm = reactive({
 })
 const commentText = ref("")
 const commentInputRef = ref(null)
+const interactionSubTab = ref("lottery")
+const manualSongTitle = ref("")
+const manualSongRequester = ref("")
+const manualSongRemark = ref("")
+const preplaySongInput = ref("")
+const preplaySongRemark = ref("")
+const giftDatePickerOpen = ref(false)
+const giftDatePickerRef = ref(null)
+const giftDatePickerMonth = ref(startOfLocalDay(new Date()))
+const giftDateDraftStartDate = ref("")
+const giftDateDraftEndDate = ref("")
+const giftDateDraftStartTime = ref("00:00")
+const giftDateDraftEndTime = ref("23:59")
 const showMomentComposer = ref(false)
 const momentText = ref("")
 const showAddManagerInput = ref(false)
 const addManagerUid = ref("")
 const coverPreviewSrc = ref("")
 const overlayBaseUrl = ref("")
+const songRequestOverlayUrl = ref("")
 const logPath = ref("")
 const systemFonts = ref(["Microsoft YaHei", "Noto Sans SC", "Segoe UI", "Arial", "sans-serif"])
 const previewPlaceholder = { id: 0, nickname: "AcFun用户", content: "这是一条弹幕预览，样式会同步到 OBS 浏览器源。" }
@@ -2291,18 +2791,25 @@ const tabs = [
   { id: "account", label: "账号", subtitle: "登录 AcFun 并连接 acfunlive-backend", icon: User },
   { id: "live", label: "开播", subtitle: "标题、封面、分区、推流码与 OBS 联动", icon: Video },
   { id: "room", label: "直播间", subtitle: "弹幕、观众、房管与黑名单", icon: Users },
+  { id: "interaction", label: "互动玩法", subtitle: "弹幕抽奖、弹幕点歌与直播间互动工具", icon: Dices },
   { id: "overlay", label: "弹幕源", subtitle: "OBS 浏览器源外观与预览", icon: MonitorPlay },
   { id: "stats", label: "数据", subtitle: "本场统计、转码信息与历史", icon: ChartBar },
   { id: "gift", label: "礼物统计", subtitle: "送出/收到礼物记录与排行", icon: Gift },
   { id: "logs", label: "日志", subtitle: "本地操作记录", icon: ScrollText },
 ]
+const interactionTabs = [
+  { id: "lottery", label: "弹幕抽奖", icon: Dices },
+  { id: "song", label: "弹幕点歌", icon: ListMusic },
+]
+const songRequestObsModes = [
+  { id: "vinylPortrait", label: "黑胶播放器", icon: Disc },
+]
 const giftDatePresets = [
   { id: "month", label: "本月", title: "本月 1 号 00:00 至现在" },
+  { id: "lastMonth", label: "上月", title: "上月 1 号 00:00 至月末" },
   { id: "week", label: "本周", title: "本周一 00:00 至现在" },
-  { id: "yesterday", label: "昨天", title: "昨天 00:00 至 23:59" },
   { id: "threeMonths", label: "近3月", title: "近三个月至现在" },
   { id: "halfYear", label: "半年", title: "近六个月至现在" },
-  { id: "all", label: "全部", title: "清除时间范围" },
 ]
 
 const currentTab = computed(() => tabs.find((item) => item.id === store.activeTab) || tabs[0])
@@ -2311,6 +2818,70 @@ const currentSubtitle = computed(() => {
     return "AcFun 账号信息与 acfunlive-backend 连接"
   }
   return currentTab.value.subtitle
+})
+const giftDateRangeText = computed(() => {
+  const startDate = parseDateTimeLocalValue(store.giftStats.dateRangeStart)
+  const endDate = parseDateTimeLocalValue(store.giftStats.dateRangeEnd)
+  const currentYear = new Date().getFullYear()
+  const shouldShowYear = Boolean(
+    (startDate && startDate.getFullYear() !== currentYear) ||
+    (endDate && endDate.getFullYear() !== currentYear) ||
+    (startDate && endDate && startDate.getFullYear() !== endDate.getFullYear()),
+  )
+  const start = formatDateTimeText(startDate, { withYear: shouldShowYear })
+  const end = formatDateTimeText(endDate, { withYear: shouldShowYear })
+  if (start && end) {
+    return `${start} 至 ${end}`
+  }
+  if (start) {
+    return `${start} 起`
+  }
+  if (end) {
+    return `截至 ${end}`
+  }
+  return "全部时间"
+})
+const giftRangeWeekdays = ["一", "二", "三", "四", "五", "六", "日"]
+const giftDatePickerMonthLabel = computed(() => {
+  const date = giftDatePickerMonth.value instanceof Date ? giftDatePickerMonth.value : new Date()
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`
+})
+const giftRangeCalendarDays = computed(() => {
+  const month = giftDatePickerMonth.value instanceof Date ? giftDatePickerMonth.value : new Date()
+  const firstDay = startOfLocalDay(new Date(month.getFullYear(), month.getMonth(), 1))
+  const gridStart = new Date(firstDay)
+  const weekday = gridStart.getDay() || 7
+  gridStart.setDate(gridStart.getDate() - weekday + 1)
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart)
+    date.setDate(gridStart.getDate() + index)
+    return {
+      key: formatDateInput(date),
+      date,
+      day: date.getDate(),
+      inMonth: date.getMonth() === month.getMonth(),
+    }
+  })
+})
+const giftDateDraftStartLabel = computed(() => formatDateInputText(giftDateDraftStartDate.value) || "未设置")
+const giftDateDraftEndLabel = computed(() => formatDateInputText(giftDateDraftEndDate.value) || "未设置")
+const giftStatsRefreshLabel = computed(() => {
+  if (store.giftStats.loading) {
+    return "统计中…"
+  }
+  if (store.giftStats.limited) {
+    return "继续完整统计"
+  }
+  return store.giftStats.loaded ? "重新统计" : "开始统计"
+})
+const giftStatsStatusText = computed(() => {
+  const gs = store.giftStats
+  if (!gs.loaded || gs.loading) {
+    return ""
+  }
+  const summary = `已缓存 ${gs.totalRecords || 0} 条 / ${gs.pagesRead || 0} 页`
+  return gs.limited && gs.limitReason ? `${summary}，${gs.limitReason}` : summary
 })
 const subtitleParts = computed(() => highlightAcfun(currentSubtitle.value))
 const userInitial = computed(() => (store.userName || "A").trim().slice(0, 1).toUpperCase())
@@ -2383,6 +2954,18 @@ const obsToggleLabel = computed(() => {
   return "OBS 推流"
 })
 const obsToggleIcon = computed(() => (store.obs.streaming ? Square : Radio))
+const nextSongRequest = computed(() => store.interaction.songRequest.queue[0] || null)
+const currentSongRequest = computed(() => store.interaction.songRequest.current || nextSongRequest.value || null)
+const currentSongDuration = computed(() => Math.max(1, Number(currentSongRequest.value?.durationSeconds) || 240))
+const currentSongProgress = computed(() => Math.min(currentSongDuration.value, Math.max(0, Number(store.interaction.songRequest.progressSeconds) || 0)))
+const currentSongProgressPercent = computed(() => `${Math.min(100, Math.max(0, (currentSongProgress.value / currentSongDuration.value) * 100)).toFixed(1)}%`)
+const adminSongQueue = computed(() => store.interaction.songRequest.queue.slice(0, store.interaction.songRequest.adminPreviewLimit))
+const currentSongRequester = computed(() => currentSongRequest.value?.nickname || "暂无点歌者")
+const currentSongCategory = computed(() => currentSongRequest.value?.category || "观众点播")
+const songObsModeLabel = computed(() => {
+  const mode = songRequestObsModes.find((item) => item.id === store.interaction.songRequest.obsMode)
+  return mode ? mode.label : "黑胶播放器"
+})
 const historyDanmakuChartText = computed(() => historyDanmakuChartMode.value === "delta" ? "弹幕增量" : "累计弹幕数")
 const historyDanmakuChartUnit = computed(() => historyDanmakuChartMode.value === "delta" ? "/分钟" : "")
 const historyChartGridY = [56, 96, 136, 176, 220]
@@ -2721,8 +3304,34 @@ watch(() => store.overlay, () => {
   window.clearTimeout(overlayBroadcastTimer)
   overlayBroadcastTimer = window.setTimeout(pushOverlayStyle, 80)
 }, { deep: true, immediate: true })
+
+let songOverlayBroadcastTimer = 0
+function pushSongRequestOverlay() {
+  const song = store.interaction.songRequest
+  const payload = {
+    mode: "vinylPortrait",
+    active: song.active,
+    paused: song.playbackPaused,
+    shuffle: song.shuffle,
+    current: song.current,
+    next: song.queue[0] || null,
+    progressSeconds: Math.max(0, Number(song.progressSeconds) || 0),
+    queue: song.queue.slice(0, song.adminPreviewLimit),
+    sung: song.played.slice(0, 20),
+    updatedAt: Date.now(),
+  }
+  broadcastSongRequestOverlay(JSON.stringify(payload)).catch(() => {})
+}
+watch(() => store.interaction.songRequest, () => {
+  window.clearTimeout(songOverlayBroadcastTimer)
+  songOverlayBroadcastTimer = window.setTimeout(pushSongRequestOverlay, 80)
+}, { deep: true, immediate: true })
+
 watch(danmakuOverlayUrl, (url) => {
   store.setObsBrowserSourceUrl(url)
+}, { immediate: true })
+watch(songRequestOverlayUrl, (url) => {
+  store.setSongRequestBrowserSourceUrl(url)
 }, { immediate: true })
 watch(() => store.ui.uiScale, (value) => {
   uiScalePercent.value = Math.round((Number(value) || 1) * 100)
@@ -2908,6 +3517,7 @@ let diagnosticTimer = 0
 let floatThemeTimer = 0
 let floatRuntimeTimer = 0
 let coverPreviewRequest = 0
+let songProgressTimer = 0
 
 watch(() => store.ui.theme, (theme) => {
   if (!isMiniWindowProcess.value) {
@@ -3002,6 +3612,8 @@ onMounted(async () => {
   window.addEventListener("mouseup", handleFloatMouseUp)
   window.addEventListener("blur", handleFloatMouseUp)
   document.addEventListener("mouseleave", handleFloatMouseUp)
+  document.addEventListener("mousedown", handleGiftDatePickerOutside, true)
+  songProgressTimer = window.setInterval(tickSongRequestProgress, 1000)
   await initializeNativeRuntime()
   store.restoreObsConnection().catch(() => {})
   await store.restoreSession()
@@ -3066,6 +3678,7 @@ onUnmounted(() => {
   window.clearInterval(diagnosticTimer)
   window.clearInterval(floatThemeTimer)
   window.clearInterval(floatRuntimeTimer)
+  window.clearInterval(songProgressTimer)
   window.clearTimeout(sidebarToggleFlashTimer)
   window.removeEventListener("resize", updateExtremeNarrowSidebar)
   window.removeEventListener("wheel", handleFloatWheel)
@@ -3075,6 +3688,7 @@ onUnmounted(() => {
   window.removeEventListener("mouseup", handleFloatMouseUp)
   window.removeEventListener("blur", handleFloatMouseUp)
   document.removeEventListener("mouseleave", handleFloatMouseUp)
+  document.removeEventListener("mousedown", handleGiftDatePickerOutside, true)
   window.removeEventListener("keydown", handleHotkeyCapture, true)
 })
 
@@ -3089,9 +3703,10 @@ async function syncFloatTheme() {
 }
 
 async function initializeNativeRuntime() {
-  const [backendPortResult, overlayUrlResult, logPathResult] = await Promise.allSettled([
+  const [backendPortResult, overlayUrlResult, songOverlayUrlResult, logPathResult] = await Promise.allSettled([
     getBackendPort(),
     getOverlayBaseUrl(),
+    getSongRequestOverlayUrl(),
     getLogPath(),
   ])
   getSystemFonts().then((fonts) => {
@@ -3132,6 +3747,12 @@ async function initializeNativeRuntime() {
     store.log(`Overlay URL 初始化失败: ${overlayUrlResult.reason?.message || overlayUrlResult.reason}`)
   }
 
+  if (songOverlayUrlResult.status === "fulfilled") {
+    songRequestOverlayUrl.value = songOverlayUrlResult.value || ""
+  } else {
+    store.log(`点歌 Overlay URL 初始化失败: ${songOverlayUrlResult.reason?.message || songOverlayUrlResult.reason}`)
+  }
+
   if (logPathResult.status === "fulfilled") {
     logPath.value = logPathResult.value || ""
   }
@@ -3156,11 +3777,13 @@ async function run(task, successMessage = "") {
     if (successMessage) {
       showToast(typeof successMessage === "function" ? successMessage(result) : successMessage)
     }
+    return result
   } catch (error) {
     const message = error && error.message ? error.message : String(error)
     store.lastError = message
     store.log(message)
     showToast(message)
+    return undefined
   }
 }
 
@@ -3172,6 +3795,25 @@ function showToast(message) {
     }
   }, 3200)
 }
+
+let giftStatsAutoRefreshDone = false
+watch(() => [store.activeTab, store.isLoggedIn], ([tab, isLoggedIn]) => {
+  if (
+    tab !== "gift" ||
+    !isLoggedIn ||
+    giftStatsAutoRefreshDone ||
+    store.giftStats.loading ||
+    store.giftStats.loaded
+  ) {
+    return
+  }
+  giftStatsAutoRefreshDone = true
+  store.loadGiftStats({ automatic: true }).catch((error) => {
+    const message = error && error.message ? error.message : String(error)
+    store.lastError = message
+    store.log(`礼物统计自动刷新失败：${message}`)
+  })
+}, { immediate: true })
 
 async function autoCheckForUpdate({ silent = true } = {}) {
   if (isMiniWindowProcess.value || updateState.checking || updateState.downloading || updateState.installing) {
@@ -3240,7 +3882,157 @@ function refreshCurrent() {
     run(async () => {
       await store.loadTranscodeInfo()
     })
+  } else if (store.activeTab === "interaction") {
+    run(() => store.startDanmu({ restart: true }), "弹幕监听已重连")
   }
+}
+
+function toggleLottery() {
+  if (store.interaction.lottery.active) {
+    store.stopLottery()
+    showToast("抽奖已暂停")
+  } else {
+    store.startLottery()
+    showToast("抽奖已开始收集")
+  }
+}
+
+function drawLottery() {
+  run(
+    () => store.drawLotteryWinners(),
+    (winners) => `已抽出 ${Array.isArray(winners) ? winners.length : 0} 位`,
+  )
+}
+
+function toggleSongRequest() {
+  if (store.interaction.songRequest.active) {
+    store.stopSongRequest()
+    showToast("点歌已暂停")
+  } else {
+    store.startSongRequest()
+    showToast("点歌已开放")
+  }
+}
+
+async function addManualSong() {
+  const title = manualSongTitle.value.trim()
+  if (!title) {
+    showToast("请输入歌名")
+    return
+  }
+  const added = await run(
+    () => store.addManualSongRequest(title, manualSongRequester.value, { remark: manualSongRemark.value }),
+    "已加入点歌队列",
+  )
+  if (added) {
+    manualSongTitle.value = ""
+    manualSongRemark.value = ""
+  }
+}
+
+function markNextSongPlayed() {
+  if (!nextSongRequest.value) {
+    return
+  }
+  store.markSongRequestPlayed(nextSongRequest.value.id)
+  showToast("已标记为已唱")
+}
+
+function playNextSongRequest() {
+  const song = store.playSongRequest()
+  showToast(song ? "已切到下一首" : "当前没有待播歌曲")
+}
+
+function playSongRequest(id) {
+  const song = store.playSongRequest(id)
+  showToast(song ? "已开始播放" : "未找到歌曲")
+}
+
+function toggleSongPlaybackPause() {
+  if (store.interaction.songRequest.playbackPaused) {
+    store.resumeSongPlayback()
+    showToast("已继续播放")
+  } else {
+    store.pauseSongPlayback()
+    showToast("已暂停播放")
+  }
+}
+
+function skipSongRequest() {
+  const song = store.skipCurrentSong()
+  showToast(song ? "已跳过并播放下一首" : "已跳过当前歌曲")
+}
+
+function replaySongRequest() {
+  store.replayCurrentSong()
+  showToast("已重播当前歌曲")
+}
+
+function toggleSongShuffle() {
+  store.toggleSongShuffle()
+  showToast(store.interaction.songRequest.shuffle ? "随机播放已开启" : "随机播放已关闭")
+}
+
+function closeSongRequestSystem() {
+  store.closeSongRequestSystem()
+  showToast("点歌系统已关闭")
+}
+
+function saveSongRequestSettings() {
+  store.saveSongRequestSettings({
+    obsMode: store.interaction.songRequest.obsMode,
+    maxPerUser: store.interaction.songRequest.maxPerUser,
+    maxQueueSize: store.interaction.songRequest.maxQueueSize,
+    adminPreviewLimit: store.interaction.songRequest.adminPreviewLimit,
+  })
+  showToast("点歌设定已保存")
+}
+
+function syncSongRequestObsSource() {
+  run(() => store.syncSongRequestBrowserSourceUrl({ force: true }), "已同步点歌 OBS 源")
+}
+
+async function addPreplaySong() {
+  const title = preplaySongInput.value.trim()
+  if (!title) {
+    showToast("请输入 YouTube 网址或关键词")
+    return
+  }
+  const added = await run(
+    () => store.addPreplaySongRequest(title, preplaySongRemark.value),
+    "已新增预播歌曲",
+  )
+  if (added) {
+    preplaySongInput.value = ""
+    preplaySongRemark.value = ""
+  }
+}
+
+function enqueuePreplaySong(id) {
+  const added = store.enqueuePreplaySongRequest(id)
+  showToast(added ? "已加入观众队列" : "观众队列已满")
+}
+
+function tickSongRequestProgress() {
+  const song = store.interaction.songRequest
+  if (!song.current || song.playbackPaused) {
+    return
+  }
+  const duration = Math.max(1, Number(song.current.durationSeconds) || 240)
+  song.progressSeconds = Math.min(duration, Math.max(0, Number(song.progressSeconds) || 0) + 1)
+  if (song.progressSeconds >= duration) {
+    store.markSongRequestPlayed(song.current.id)
+    if (song.queue.length) {
+      store.playSongRequest()
+    }
+  }
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0))
+  const minutes = Math.floor(total / 60)
+  const rest = total % 60
+  return `${minutes}:${String(rest).padStart(2, "0")}`
 }
 
 function doLogin() {
@@ -3592,8 +4384,112 @@ function displayCount(value) {
   return value === undefined || value === null || value === "" ? "-" : value
 }
 
+function loadGiftStatsManually() {
+  run(
+    () => store.loadGiftStats({ automatic: false }),
+    (result) => result?.limited ? "已读取到安全上限" : "礼物统计已更新",
+  )
+}
+
 function setGiftDateRange(start, end) {
-  store.setGiftStatsDateRange(start, end)
+  const range = normalizeGiftDateRangeValues(start, end)
+  run(() => store.setGiftStatsDateRange(range.start, range.end))
+}
+
+function toggleGiftDateRangePicker() {
+  if (giftDatePickerOpen.value) {
+    closeGiftDateRangePicker()
+    return
+  }
+  syncGiftDateDraftFromStore()
+  giftDatePickerOpen.value = true
+}
+
+function closeGiftDateRangePicker() {
+  giftDatePickerOpen.value = false
+}
+
+function handleGiftDatePickerOutside(event) {
+  if (!giftDatePickerOpen.value) {
+    return
+  }
+  const root = giftDatePickerRef.value
+  if (root && event.target instanceof Node && root.contains(event.target)) {
+    return
+  }
+  closeGiftDateRangePicker()
+}
+
+function syncGiftDateDraftFromStore() {
+  const start = parseDateTimeLocalParts(store.giftStats.dateRangeStart)
+  const end = parseDateTimeLocalParts(store.giftStats.dateRangeEnd)
+  giftDateDraftStartDate.value = start.date
+  giftDateDraftEndDate.value = end.date
+  giftDateDraftStartTime.value = start.time || "00:00"
+  giftDateDraftEndTime.value = end.time || "23:59"
+  const anchor = start.date || end.date
+  giftDatePickerMonth.value = anchor ? new Date(`${anchor}T00:00:00`) : startOfLocalDay(new Date())
+}
+
+function shiftGiftDatePickerMonth(step) {
+  const current = giftDatePickerMonth.value instanceof Date ? giftDatePickerMonth.value : new Date()
+  giftDatePickerMonth.value = startOfLocalDay(new Date(current.getFullYear(), current.getMonth() + step, 1))
+}
+
+function selectGiftRangeDay(day) {
+  const key = day.key
+  if (
+    !giftDateDraftStartDate.value ||
+    (giftDateDraftStartDate.value && giftDateDraftEndDate.value) ||
+    key < giftDateDraftStartDate.value
+  ) {
+    giftDateDraftStartDate.value = key
+    giftDateDraftEndDate.value = ""
+    giftDateDraftStartTime.value = giftDateDraftStartTime.value || "00:00"
+    giftDateDraftEndTime.value = "23:59"
+    return
+  }
+  giftDateDraftEndDate.value = key
+  giftDateDraftEndTime.value = giftDateDraftEndTime.value || "23:59"
+}
+
+function giftRangeDayClass(day) {
+  const key = day.key
+  const start = giftDateDraftStartDate.value
+  const end = giftDateDraftEndDate.value
+  return {
+    muted: !day.inMonth,
+    start: start === key,
+    end: end === key,
+    selected: start === key || end === key,
+    "in-range": start && end && key > start && key < end,
+    today: key === formatDateInput(new Date()),
+  }
+}
+
+function clearGiftDateDraft() {
+  giftDateDraftStartDate.value = ""
+  giftDateDraftEndDate.value = ""
+  giftDateDraftStartTime.value = "00:00"
+  giftDateDraftEndTime.value = "23:59"
+  setGiftDateRange("", "")
+  closeGiftDateRangePicker()
+}
+
+function applyGiftDateDraft() {
+  const start = giftDateDraftStartDate.value
+    ? `${giftDateDraftStartDate.value}T${normalizeTimeInput(giftDateDraftStartTime.value, "00:00")}`
+    : ""
+  const end = giftDateDraftEndDate.value
+    ? `${giftDateDraftEndDate.value}T${normalizeTimeInput(giftDateDraftEndTime.value, "23:59")}`
+    : ""
+  setGiftDateRange(start, end)
+  closeGiftDateRangePicker()
+}
+
+function applyGiftDatePreset(preset) {
+  setGiftDatePreset(preset)
+  closeGiftDateRangePicker()
 }
 
 function setGiftDatePreset(preset) {
@@ -3601,20 +4497,15 @@ function setGiftDatePreset(preset) {
   let start = null
   let end = now
 
-  if (preset === "all") {
-    setGiftDateRange("", "")
-    return
-  }
   if (preset === "month") {
     start = startOfLocalDay(new Date(now.getFullYear(), now.getMonth(), 1))
+  } else if (preset === "lastMonth") {
+    start = startOfLocalDay(new Date(now.getFullYear(), now.getMonth() - 1, 1))
+    end = endOfLocalDay(new Date(now.getFullYear(), now.getMonth(), 0))
   } else if (preset === "week") {
     start = startOfLocalDay(now)
     const day = start.getDay() || 7
     start.setDate(start.getDate() - day + 1)
-  } else if (preset === "yesterday") {
-    start = startOfLocalDay(now)
-    start.setDate(start.getDate() - 1)
-    end = endOfLocalDay(start)
   } else if (preset === "threeMonths") {
     start = startOfLocalDay(now)
     start.setMonth(start.getMonth() - 3)
@@ -3624,6 +4515,46 @@ function setGiftDatePreset(preset) {
   }
 
   setGiftDateRange(formatDateTimeLocal(start), formatDateTimeLocal(end))
+}
+
+function parseDateTimeLocalParts(value) {
+  if (!value) {
+    return { date: "", time: "" }
+  }
+  const text = String(value)
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})(?:T(\d{1,2}:\d{1,2}))?/)
+  if (match) {
+    return {
+      date: match[1],
+      time: normalizeTimeInput(match[2], ""),
+    }
+  }
+  const parsed = Date.parse(text)
+  if (!Number.isFinite(parsed)) {
+    return { date: "", time: "" }
+  }
+  const date = new Date(parsed)
+  return {
+    date: formatDateInput(date),
+    time: formatTimeInput(date),
+  }
+}
+
+function normalizeGiftDateRangeValues(start, end) {
+  const normalizedStart = start || ""
+  const normalizedEnd = end || ""
+  const startTime = Date.parse(normalizedStart)
+  const endTime = Date.parse(normalizedEnd)
+  if (
+    normalizedStart &&
+    normalizedEnd &&
+    Number.isFinite(startTime) &&
+    Number.isFinite(endTime) &&
+    startTime > endTime
+  ) {
+    return { start: normalizedEnd, end: normalizedStart }
+  }
+  return { start: normalizedStart, end: normalizedEnd }
 }
 
 function startOfLocalDay(date) {
@@ -3648,6 +4579,77 @@ function formatDateTimeLocal(date) {
   const hour = String(date.getHours()).padStart(2, "0")
   const minute = String(date.getMinutes()).padStart(2, "0")
   return `${year}-${month}-${day}T${hour}:${minute}`
+}
+
+function formatDateInput(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return ""
+  }
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function formatTimeInput(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return ""
+  }
+  const hour = String(date.getHours()).padStart(2, "0")
+  const minute = String(date.getMinutes()).padStart(2, "0")
+  return `${hour}:${minute}`
+}
+
+function formatDateInputText(value) {
+  if (!value) {
+    return ""
+  }
+  const parsed = Date.parse(`${value}T00:00:00`)
+  if (!Number.isFinite(parsed)) {
+    return ""
+  }
+  const date = new Date(parsed)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function normalizeTimeInput(value, fallback = "00:00") {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{1,2})/)
+  if (!match) {
+    return fallback
+  }
+  const hour = Math.min(23, Math.max(0, Number(match[1]) || 0))
+  const minute = Math.min(59, Math.max(0, Number(match[2]) || 0))
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+}
+
+function parseDateTimeLocalValue(value) {
+  if (!value) {
+    return null
+  }
+  const parsed = Date.parse(String(value))
+  if (!Number.isFinite(parsed)) {
+    return null
+  }
+  return new Date(parsed)
+}
+
+function formatDateTimeText(value, options = {}) {
+  const date = value instanceof Date ? value : parseDateTimeLocalValue(value)
+  if (!date || Number.isNaN(date.getTime())) {
+    return ""
+  }
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  const hour = String(date.getHours()).padStart(2, "0")
+  const minute = String(date.getMinutes()).padStart(2, "0")
+  if (options.withYear) {
+    return `${year}-${month}-${day} ${hour}:${minute}`
+  }
+  return `${month}-${day} ${hour}:${minute}`
 }
 
 function rankRowClass(rank) {
